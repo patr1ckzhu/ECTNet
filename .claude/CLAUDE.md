@@ -18,23 +18,21 @@ Enhanced CTNet for EEG-based motor imagery classification, targeting 8-channel O
 
 - `model.py` — CTNet model definition (PatchEmbeddingCNN, Transformer, EEGTransformer)
 - `train.py` — Training logic (ExP class, main loop, hyperparameters)
-- `main_8_channels.py` — 8-channel variant
-- `main_2class_left_right.py` — 2-class (left/right hand)
-- `main_2class_left_right_8ch.py` — 2-class on 8 channels (closest to deployment)
-- `main_3class_left_right_feet.py` — 3-class (left/right/feet)
-- `channel_selector.py` — Channel selection tool for reducing 22ch → 8ch
 - `utils.py` — Data loading, metrics, GradCAM visualization
-- `preprocessing_for_2a.py` / `preprocessing_for_2b.py` — GDF → MAT preprocessing
+- `preprocessing/` — GDF → MAT data preprocessing
+- `experiments/` — Training variants (8ch, 2-class, 3-class)
+- `tools/channel_selector.py` — Channel selection for reducing 22ch → 8ch
+- `docs/` — Research plans and documentation
 
 ## Workflow
 
 1. Download BCI IV-2a/2b datasets into `BCICIV_2a_gdf/` and `BCICIV_2b_gdf/`
-2. Run preprocessing: `python preprocessing_for_2a.py` / `python preprocessing_for_2b.py`
-3. Train: `python train.py` (or 8-channel variants)
+2. Run preprocessing: `python preprocessing/preprocessing_for_2a.py`
+3. Train: `python train.py` (or scripts in `experiments/`)
 
 ## Conventions
 
 - Model architecture is defined in `model.py`, training logic in `train.py`
-- Variant training scripts (main_*.py) still contain inline model definitions
+- Experiment variant scripts in `experiments/` still contain inline model definitions
 - Data is stored as .mat files after preprocessing
 - Models are saved as .pth files in `models/` directory
