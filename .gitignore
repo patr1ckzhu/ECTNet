@@ -1,0 +1,29 @@
+# Data
+BCICIV_2a_gdf/
+BCICIV_2b_gdf/
+*.mat
+*.gdf
+
+# Models
+models/
+*.pth
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.eggs/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+nohup.out
