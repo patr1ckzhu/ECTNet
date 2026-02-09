@@ -78,10 +78,20 @@ ssh win "C:\Users\patrick\anaconda3\condabin\conda.bat activate eeg-moabb && cd 
 - Data is stored as .mat files after preprocessing
 - Models are saved as .pth files in `models/` directory
 
-## Experiment Results (Seed=42, BCI IV-2a, 4-class)
+## Experiment Results (Seed=42)
 
-### 22ch Baseline vs Channel Attention
-- **22ch baseline**: 81.63% mean acc (CTNet 论文 81.33%)
+### BCI IV-2a (22ch, 4-class) — ECTNet baseline
+- **Mean accuracy: 81.06%**, kappa: 74.74% (CTNet 论文 81.33%)
+- Per-subject: S1 86.81%, S2 71.53%, S3 90.97%, S4 78.12%, S5 77.78%, S6 63.54%, S7 88.89%, S8 85.76%, S9 86.11%
+- S6 是已知困难 subject (BCI illiteracy)
+
+### BCI IV-2b (3ch, 2-class)
+- **Mean accuracy: 87.18%**, kappa: 74.37%
+- Per-subject: S1 76.56%, S2 69.64%, S3 84.69%, S4 96.88%, S5 95.00%, S6 86.25%, S7 93.12%, S8 93.75%, S9 88.75%
+- Kappa 与 4-class 几乎一致，说明模型判别能力在两个任务上相当
+
+### Channel Attention 实验 (22ch)
+- **22ch baseline**: 81.63% mean acc
 - **22ch + CA (SE-Net, l1_lambda=1e-4)**: 81.29% mean acc → 基本持平，CA 在 22ch 下无显著提升
 - CA 学到的通道权重符合神经科学先验（感觉运动区 C5/Cz/C6/CP3/CP4 权重高）
 
@@ -91,10 +101,11 @@ ssh win "C:\Users\patrick\anaconda3\condabin\conda.bat activate eeg-moabb && cd 
 - 结论: 手动选通道更优，CA 的 soft attention 权重反映的是 22ch 下的补充价值，不等于最优 8ch 子集
 - **硬件部署推荐**: C3, C4, Cz, FCz, CP1, CP2, FC3, FC4
 
-### Branch: `feature/channel-attention`
-- model.py: 添加了 ChannelAttention (SE-Net style)，PatchEmbeddingCNN 拆分为 temporal_conv → channel_attention → spatial_conv
-- train.py: L1 正则 + 训练后保存通道权重 (.npy)
-- 实验脚本和结果在 Windows: `compare_9sub_baseline/`, `compare_9sub_ca/`, `compare_8ch_learned/`, `compare_8ch_manual/`
+### 训练效率优化
+- 并行训练 N_WORKERS=3 (mp.Pool): 9 subjects 3×3 均分，~24.5 min (vs 原始 ~55 min 顺序, 2.2x 加速)
+- interaug 向量化、val 频率降低、torch.compile (Linux)
+- GPU augmentation / AMP / 大 batch 对此小模型 (25K params) 无效 — 瓶颈是 Python dispatch overhead
+- 支持命令行参数: `python train.py A` 或 `python train.py B`
 
 ## Progress
 
@@ -104,7 +115,9 @@ ssh win "C:\Users\patrick\anaconda3\condabin\conda.bat activate eeg-moabb && cd 
 - [x] SSH 远程训练 pipeline 验证通过 (Mac → ssh win → conda activate → train.py)
 - [x] Reproduce baseline training on Windows 5080 (9 subjects, mean acc 81.63% seed=42)
 - [x] Channel Attention 实验完成 (22ch 持平, 8ch 手动选通道更优)
-- [ ] 训练效率优化 (GPU 利用率仅 ~30%, 目标 80%+)
+- [x] 训练效率优化 (并行训练 N_WORKERS=3, 向量化 interaug, ~55min→~24.5min, 2.2x 加速)
+- [x] BCI IV-2a 训练验证 (81.06% mean acc, 4-class)
+- [x] BCI IV-2b 训练验证 (87.18% mean acc, 2-class)
 - [ ] Build real-time inference pipeline (LSL → preprocess → model → output)
 - [ ] PsychoPy experiment paradigm
 - [ ] Real-time EEG visualization UI
