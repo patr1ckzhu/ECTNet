@@ -4,12 +4,44 @@ Enhanced Convolutional Transformer Network for EEG-based motor imagery classific
 
 Based on [CTNet](https://github.com/snailpt/CTNet) (Zhao et al., Sci Rep 2024).
 
+## Results
+
+### BCI Competition IV-2a (22 channels, 4-class)
+
+| Subject | S1 | S2 | S3 | S4 | S5 | S6 | S7 | S8 | S9 | **Mean** |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Accuracy | 86.81 | 71.53 | 90.97 | 78.12 | 77.78 | 63.54 | 88.89 | 85.76 | 86.11 | **81.06** |
+| Kappa | 82.41 | 62.04 | 87.96 | 70.83 | 70.37 | 51.39 | 85.19 | 81.02 | 81.48 | **74.74** |
+
+### BCI Competition IV-2b (3 channels, 2-class)
+
+| Subject | S1 | S2 | S3 | S4 | S5 | S6 | S7 | S8 | S9 | **Mean** |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Accuracy | 76.56 | 69.64 | 84.69 | 96.88 | 95.00 | 86.25 | 93.12 | 93.75 | 88.75 | **87.18** |
+| Kappa | 53.12 | 39.29 | 69.38 | 93.75 | 90.00 | 72.50 | 86.25 | 87.50 | 77.50 | **74.37** |
+
+### Channel Attention & 8ch Selection
+
+- Channel Attention (SE-Net) on 22ch: 81.29% (no improvement over baseline)
+- Manual 8ch selection: **75.50%** (C3, C4, Cz, FCz, CP1, CP2, FC3, FC4)
+- CA-learned 8ch selection: 73.50%
+- Hardware deployment recommendation: manual 8ch
+
+## Architecture
+
+ECTNet = PatchEmbeddingCNN (temporal conv + channel attention + spatial conv) + Transformer encoder
+
+- **Channel Attention**: SE-Net style, learns per-electrode importance weights
+- **Temporal Conv**: EEGNet-inspired, extracts frequency features per channel
+- **Spatial Conv**: Depth-wise, fuses across EEG electrodes
+- **Transformer**: Multi-head self-attention on temporal patches
+
 ## Project Structure
 
 ```
 ECTNet/
-├── model.py                 # CTNet model architecture
-├── train.py                 # Training script (subject-specific / LOSO)
+├── model.py                 # Model architecture (ChannelAttention, PatchEmbeddingCNN, Transformer)
+├── train.py                 # Training script with parallel subject training (mp.Pool)
 ├── utils.py                 # Data loading, metrics, GradCAM
 ├── preprocessing/
 │   ├── preprocessing_for_2a.py   # BCI IV-2a: GDF → MAT
@@ -48,15 +80,17 @@ python preprocessing/preprocessing_for_2b.py
 ### Training
 
 ```bash
-# Baseline: 22-channel, 4-class, subject-specific
-python train.py
+# BCI IV-2a: 22-channel, 4-class (default)
+python train.py A
+
+# BCI IV-2b: 3-channel, 2-class
+python train.py B
 
 # 8-channel experiments
 python experiments/train_8ch.py
-
-# 2-class on 8 channels (closest to OpenBCI deployment)
-python experiments/train_2class_8ch.py
 ```
+
+Training uses parallel subject processing (N_WORKERS=3) for ~2.2x speedup on multi-core systems.
 
 ## Reference
 

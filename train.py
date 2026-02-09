@@ -432,6 +432,7 @@ def main(dirs,
     return df_result
 
 if __name__ == "__main__":
+    import sys
     #----------------------------------------
     DATA_DIR = r'./mymat_raw/'
     EVALUATE_MODE = 'LOSO-No' # leaving one subject out subject-dependent  subject-indenpedent
@@ -439,13 +440,13 @@ if __name__ == "__main__":
     N_SUBJECT = 9       # BCI
     N_AUG = 3           # data augmentation times for generating artificial training data set
     N_SEG = 8           # segmentation times for S&R
-    N_WORKERS = 4       # parallel subject training (1=sequential, 4=recommended for RTX 5080)
+    N_WORKERS = 3       # parallel subject training (3=optimal for 9 subjects: 3x3 batches)
 
     EPOCHS = 1000
     EMB_DIM = 16
     HEADS = 2
     DEPTH = 6
-    TYPE = 'A'
+    TYPE = sys.argv[1] if len(sys.argv) > 1 else 'A'  # usage: python train.py [A|B]
     validate_ratio = 0.3 # split raw train dataset into real train dataset and validate dataset
 
     EEGNet1_F1 = 8
