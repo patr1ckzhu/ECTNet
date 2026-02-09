@@ -20,6 +20,9 @@ __pycache__/
 .vscode/
 *.swp
 
+# Claude Code
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

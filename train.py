@@ -284,7 +284,7 @@ class ExP():
 
         # load model for test
         self.model.eval()
-        self.model = torch.load(self.model_filename).cuda()
+        self.model = torch.load(self.model_filename, weights_only=False).cuda()
         outputs_list = []
         with torch.no_grad():
             for i, (img, label) in enumerate(self.test_dataloader):
