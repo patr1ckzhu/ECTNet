@@ -19,16 +19,51 @@ import torch.nn.functional as F
 from utils import numberClassChannel
 
 
+class ChannelAttention(nn.Module):
+    """SE-Net style attention for EEG electrode channels.
+
+    Learns per-channel importance weights to automatically identify
+    which EEG electrodes are most relevant for classification.
+    """
+    def __init__(self, n_channels, reduction=4):
+        super().__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(n_channels, max(n_channels // reduction, 1)),
+            nn.ReLU(inplace=True),
+            nn.Linear(max(n_channels // reduction, 1), n_channels),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        # x: (batch, features, channels, time)
+        b, f, c, t = x.shape
+        # Squeeze: global average pooling over features and time
+        weights = x.mean(dim=(1, 3))           # (b, c)
+        weights = self.fc(weights)              # (b, c)
+        # Store weights for later extraction
+        self.last_weights = weights.detach()
+        # Scale: broadcast multiply
+        return x * weights.view(b, 1, c, 1)
+
+
 class PatchEmbeddingCNN(nn.Module):
     def __init__(self, f1=16, kernel_size=64, D=2, pooling_size1=8, pooling_size2=8, dropout_rate=0.3, number_channel=22, emb_size=40):
         super().__init__()
         f2 = D*f1
-        self.cnn_module = nn.Sequential(
-            # temporal conv kernel size 64=0.25fs
-            nn.Conv2d(1, f1, (1, kernel_size), (1, 1), padding='same', bias=False), # [batch, 22, 1000]
+
+        # Temporal convolution: extract temporal features per channel
+        self.temporal_conv = nn.Sequential(
+            nn.Conv2d(1, f1, (1, kernel_size), (1, 1), padding='same', bias=False),
             nn.BatchNorm2d(f1),
+        )
+
+        # Channel attention: learn electrode importance before spatial fusion
+        self.channel_attention = ChannelAttention(number_channel)
+
+        # Spatial convolution: fuse channels + downstream processing
+        self.spatial_conv = nn.Sequential(
             # channel depth-wise conv
-            nn.Conv2d(f1, f2, (number_channel, 1), (1, 1), groups=f1, padding='valid', bias=False), #
+            nn.Conv2d(f1, f2, (number_channel, 1), (1, 1), groups=f1, padding='valid', bias=False),
             nn.BatchNorm2d(f2),
             nn.ELU(),
             # average pooling 1
@@ -38,11 +73,9 @@ class PatchEmbeddingCNN(nn.Module):
             nn.Conv2d(f2, f2, (1, 16), padding='same', bias=False),
             nn.BatchNorm2d(f2),
             nn.ELU(),
-
             # average pooling 2 to adjust the length of feature into transformer encoder
             nn.AvgPool2d((1, pooling_size2)),
             nn.Dropout(dropout_rate),
-
         )
 
         self.projection = nn.Sequential(
@@ -52,7 +85,9 @@ class PatchEmbeddingCNN(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         b, _, _, _ = x.shape  # input shape = [batch size, feature channel 1, electrode channel (22 for 2a, 3 for 2b), sample point 1000]
-        x = self.cnn_module(x)
+        x = self.temporal_conv(x)
+        x = self.channel_attention(x)
+        x = self.spatial_conv(x)
         x = self.projection(x)
         return x
 
@@ -239,3 +274,15 @@ class EEGTransformer(nn.Module):
 
         out = self.classification(self.flatten(features))
         return features, out
+
+    def get_channel_attention_weights(self):
+        """Extract the last computed channel attention weights.
+        Returns: Tensor of shape (batch, n_channels) or None if not yet computed.
+        """
+        patch_emb = self.cnn[0]  # PatchEmbeddingCNN inside BranchEEGNetTransformer
+        return getattr(patch_emb.channel_attention, 'last_weights', None)
+
+    def get_channel_attention_params(self):
+        """Return the channel attention FC parameters for L1 regularization."""
+        patch_emb = self.cnn[0]
+        return patch_emb.channel_attention.fc.parameters()

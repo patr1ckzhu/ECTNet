@@ -49,6 +49,7 @@ class ExP():
                  validate_ratio = 0.2,
                  learning_rate = 0.001,
                  batch_size = 72,       # each batch of raw train dataset, real training batchsize =  batch_size * (1 + N_AUG) for additional data augmentation.
+                 l1_lambda = 1e-4,      # L1 regularization weight for channel attention sparsity
                  ):
 
         super(ExP, self).__init__()
@@ -69,6 +70,7 @@ class ExP():
         self.evaluate_mode = evaluate_mode
         self.validate_ratio = validate_ratio
 
+        self.l1_lambda = l1_lambda
         self.Tensor = torch.cuda.FloatTensor
         self.LongTensor = torch.cuda.LongTensor
         self.criterion_cls = torch.nn.CrossEntropyLoss().cuda()
@@ -220,6 +222,12 @@ class ExP():
                 outputs_list.append(outputs)
                 label_list.append(label)
                 loss = self.criterion_cls(outputs, label)
+
+                # L1 regularization on channel attention FC parameters for sparsity
+                if self.l1_lambda > 0:
+                    l1_loss = sum(p.abs().sum() for p in self.model.get_channel_attention_params())
+                    loss = loss + self.l1_lambda * l1_loss
+
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
@@ -302,6 +310,20 @@ class ExP():
 
         print("epoch: ", best_epoch, '\tThe test accuracy is:', test_acc)
 
+        # Extract channel attention weights from test data
+        ca_weights_list = []
+        with torch.no_grad():
+            for i, (img, _) in enumerate(self.test_dataloader):
+                img = img.type(self.Tensor).cuda()
+                self.model(img)
+                w = self.model.get_channel_attention_weights()
+                if w is not None:
+                    ca_weights_list.append(w.cpu())
+        if ca_weights_list:
+            ca_weights = torch.cat(ca_weights_list).mean(dim=0).numpy()  # (n_channels,)
+            ca_path = self.result_name + '/channel_attention_sub{}.npy'.format(self.nSub)
+            np.save(ca_path, ca_weights)
+            print("Channel attention weights (sub {}): {}".format(self.nSub, ca_weights))
 
         df_process = pd.DataFrame(result_process)
 
@@ -321,7 +343,8 @@ def main(dirs,
          eeg1_pooling_size2=8,# p2
          eeg1_dropout_rate=0.3,
          flatten_eeg1=600,
-         validate_ratio = 0.2
+         validate_ratio = 0.2,
+         l1_lambda = 1e-4,
          ):
 
     if not os.path.exists(dirs):
@@ -362,7 +385,8 @@ def main(dirs,
                   eeg1_pooling_size2 = eeg1_pooling_size2,
                   eeg1_dropout_rate = eeg1_dropout_rate,
                   flatten_eeg1 = flatten_eeg1,
-                  validate_ratio = validate_ratio
+                  validate_ratio = validate_ratio,
+                  l1_lambda = l1_lambda,
                   )
 
         testAcc, Y_true, Y_pred, df_process, best_epoch = exp.train()
@@ -444,6 +468,7 @@ if __name__ == "__main__":
     EEGNet1_POOL_SIZE1 = 8
     EEGNet1_POOL_SIZE2 = 8
     FLATTEN_EEGNet1 = 240
+    L1_LAMBDA = 1e-4        # L1 regularization for channel attention sparsity
 
     if EVALUATE_MODE!='LOSO':
         EEGNet1_DROPOUT_RATE = 0.5
@@ -486,5 +511,6 @@ if __name__ == "__main__":
                     eeg1_dropout_rate = EEGNet1_DROPOUT_RATE,
                     flatten_eeg1 = FLATTEN_EEGNet1,
                     validate_ratio = validate_ratio,
+                    l1_lambda = L1_LAMBDA,
                   )
     print(time.asctime(time.localtime(time.time())))
