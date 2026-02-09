@@ -194,8 +194,12 @@ class ExP():
         val_img = img[val_indices].type(self.Tensor)
         val_label_t = label[val_indices].type(self.LongTensor)
 
-        # Compile model for faster execution (PyTorch 2.x)
-        compiled_model = torch.compile(self.model)
+        # Compile model for faster execution (PyTorch 2.x, Linux only — Triton not available on Windows)
+        import platform
+        if platform.system() != 'Windows':
+            compiled_model = torch.compile(self.model)
+        else:
+            compiled_model = self.model
 
         best_epoch = 0
         min_loss = 100
