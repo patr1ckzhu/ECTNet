@@ -24,6 +24,8 @@ warnings.filterwarnings("ignore")
 cudnn.benchmark = True
 cudnn.deterministic = False
 
+import torch.multiprocessing as mp
+
 from model import EEGTransformer
 from utils import calMetrics, calculatePerClass, numberClassChannel, load_data_evaluate
 
@@ -301,6 +303,40 @@ class ExP():
         return test_acc, test_label, y_pred, df_process, best_epoch
 
 
+def _train_subject_worker(args):
+    """Worker function for parallel subject training. Runs in a separate process."""
+    (subject_id, seed, data_dir, result_dir, epochs, n_aug, n_seg, config) = args
+
+    starttime = datetime.datetime.now()
+    print(f'[S{subject_id}] seed={seed}, start={starttime.strftime("%H:%M:%S")}')
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    exp = ExP(subject_id, data_dir, result_dir, epochs, n_aug, n_seg, [0], **config)
+    testAcc, Y_true, Y_pred, df_process, best_epoch = exp.train()
+
+    true_cpu = Y_true.cpu().numpy().astype(int)
+    pred_cpu = Y_pred.cpu().numpy().astype(int)
+    accuracy, precision, recall, f1, kappa = calMetrics(true_cpu, pred_cpu)
+
+    elapsed = datetime.datetime.now() - starttime
+    print(f'[S{subject_id}] acc={accuracy*100:.2f}%, kappa={kappa*100:.2f}%, epoch={best_epoch}, duration={elapsed}')
+
+    return {
+        'subject': subject_id,
+        'true': true_cpu,
+        'pred': pred_cpu,
+        'df_process': df_process,
+        'best_epoch': best_epoch,
+        'accuracy': accuracy, 'precision': precision,
+        'recall': recall, 'f1': f1, 'kappa': kappa,
+    }
+
+
 def main(dirs,
          evaluate_mode = 'subject-dependent', # "LOSO" or other
          heads=8,             # heads of MHA
@@ -316,89 +352,70 @@ def main(dirs,
          flatten_eeg1=600,
          validate_ratio = 0.2,
          l1_lambda = 1e-4,
+         n_workers = 1,       # number of parallel subject workers (1=sequential)
          ):
 
     if not os.path.exists(dirs):
         os.makedirs(dirs)
 
+    # Prepare per-subject args
+    config = dict(evaluate_mode=evaluate_mode, heads=heads, emb_size=emb_size,
+                  depth=depth, dataset_type=dataset_type, eeg1_f1=eeg1_f1,
+                  eeg1_kernel_size=eeg1_kernel_size, eeg1_D=eeg1_D,
+                  eeg1_pooling_size1=eeg1_pooling_size1,
+                  eeg1_pooling_size2=eeg1_pooling_size2,
+                  eeg1_dropout_rate=eeg1_dropout_rate,
+                  flatten_eeg1=flatten_eeg1, validate_ratio=validate_ratio,
+                  l1_lambda=l1_lambda)
+
+    # Generate deterministic seeds for each subject upfront
+    rng = np.random.RandomState(42)
+    subject_seeds = [int(rng.randint(2024)) for _ in range(N_SUBJECT)]
+
+    worker_args = [
+        (i + 1, subject_seeds[i], DATA_DIR, dirs, EPOCHS, N_AUG, N_SEG, config)
+        for i in range(N_SUBJECT)
+    ]
+
+    # Train subjects (parallel or sequential)
+    if n_workers > 1:
+        ctx = mp.get_context('spawn')
+        with ctx.Pool(processes=n_workers) as pool:
+            results = pool.map(_train_subject_worker, worker_args)
+    else:
+        results = [_train_subject_worker(a) for a in worker_args]
+
+    # Sort results by subject ID
+    results.sort(key=lambda r: r['subject'])
+
+    # Write Excel outputs
     result_write_metric = ExcelWriter(dirs+"/result_metric.xlsx")
-
-    result_metric_dict = {}
-    y_true_pred_dict = { }
-
     process_write = ExcelWriter(dirs+"/process_train.xlsx")
     pred_true_write = ExcelWriter(dirs+"/pred_true.xlsx")
+
     subjects_result = []
     best_epochs = []
 
-    for i in range(N_SUBJECT):
+    for r in results:
+        sid = r['subject']
+        df_pred_true = pd.DataFrame({'pred': r['pred'], 'true': r['true']})
+        df_pred_true.to_excel(pred_true_write, sheet_name=str(sid))
+        r['df_process'].to_excel(process_write, sheet_name=str(sid))
 
-        starttime = datetime.datetime.now()
-        seed_n = np.random.randint(2024)
-        print('seed is ' + str(seed_n))
-        random.seed(seed_n)
-        np.random.seed(seed_n)
-        torch.manual_seed(seed_n)
-        torch.cuda.manual_seed(seed_n)
-        torch.cuda.manual_seed_all(seed_n)
-        index_round =0
-        print('Subject %d' % (i+1))
-        exp = ExP(i + 1, DATA_DIR, dirs, EPOCHS, N_AUG, N_SEG, gpus,
-                  evaluate_mode = evaluate_mode,
-                  heads=heads,
-                  emb_size=emb_size,
-                  depth=depth,
-                  dataset_type=dataset_type,
-                  eeg1_f1 = eeg1_f1,
-                  eeg1_kernel_size = eeg1_kernel_size,
-                  eeg1_D = eeg1_D,
-                  eeg1_pooling_size1 = eeg1_pooling_size1,
-                  eeg1_pooling_size2 = eeg1_pooling_size2,
-                  eeg1_dropout_rate = eeg1_dropout_rate,
-                  flatten_eeg1 = flatten_eeg1,
-                  validate_ratio = validate_ratio,
-                  l1_lambda = l1_lambda,
-                  )
+        subjects_result.append({
+            'accuray': r['accuracy']*100, 'precision': r['precision']*100,
+            'recall': r['recall']*100, 'f1': r['f1']*100, 'kappa': r['kappa']*100
+        })
+        best_epochs.append(r['best_epoch'])
 
-        testAcc, Y_true, Y_pred, df_process, best_epoch = exp.train()
-        true_cpu = Y_true.cpu().numpy().astype(int)
-        pred_cpu = Y_pred.cpu().numpy().astype(int)
-        df_pred_true = pd.DataFrame({'pred': pred_cpu, 'true': true_cpu})
-        df_pred_true.to_excel(pred_true_write, sheet_name=str(i+1))
-        y_true_pred_dict[i] = df_pred_true
+        print(f" S{sid} BEST ACC: {r['accuracy']*100:.2f}%\tkappa: {r['kappa']*100:.2f}%")
 
-        accuracy, precison, recall, f1, kappa = calMetrics(true_cpu, pred_cpu)
-        subject_result = {'accuray': accuracy*100,
-                          'precision': precison*100,
-                          'recall': recall*100,
-                          'f1': f1*100,
-                          'kappa': kappa*100
-                          }
-        subjects_result.append(subject_result)
-        df_process.to_excel(process_write, sheet_name=str(i+1))
-        best_epochs.append(best_epoch)
-
-        print(' THE BEST ACCURACY IS ' + str(testAcc) + "\tkappa is " + str(kappa) )
-
-
-        endtime = datetime.datetime.now()
-        print('subject %d duration: '%(i+1) + str(endtime - starttime))
-
-        if i == 0:
-            yt = Y_true
-            yp = Y_pred
-        else:
-            yt = torch.cat((yt, Y_true))
-            yp = torch.cat((yp, Y_pred))
-
-        df_result = pd.DataFrame(subjects_result)
     process_write.close()
     pred_true_write.close()
 
-
-    print('**The average Best accuracy is: ' + str(df_result['accuray'].mean()) + "kappa is: " + str(df_result['kappa'].mean()) + "\n" )
+    df_result = pd.DataFrame(subjects_result)
+    print('\n**The average Best accuracy is: ' + str(df_result['accuray'].mean()) + " kappa is: " + str(df_result['kappa'].mean()) + "\n" )
     print("best epochs: ", best_epochs)
-    result_metric_dict = df_result
 
     mean = df_result.mean(axis=0)
     mean.name = 'mean'
@@ -409,13 +426,10 @@ def main(dirs,
     df_result.to_excel(result_write_metric, index=False)
     print('-'*9, ' all result ', '-'*9)
     print(df_result)
-
     print("*"*40)
-
     result_write_metric.close()
 
-
-    return result_metric_dict
+    return df_result
 
 if __name__ == "__main__":
     #----------------------------------------
@@ -425,6 +439,7 @@ if __name__ == "__main__":
     N_SUBJECT = 9       # BCI
     N_AUG = 3           # data augmentation times for generating artificial training data set
     N_SEG = 8           # segmentation times for S&R
+    N_WORKERS = 4       # parallel subject training (1=sequential, 4=recommended for RTX 5080)
 
     EPOCHS = 1000
     EMB_DIM = 16
@@ -483,5 +498,6 @@ if __name__ == "__main__":
                     flatten_eeg1 = FLATTEN_EEGNet1,
                     validate_ratio = validate_ratio,
                     l1_lambda = L1_LAMBDA,
+                    n_workers = N_WORKERS,
                   )
     print(time.asctime(time.localtime(time.time())))
