@@ -92,11 +92,12 @@ python acquisition/recorder.py
 ```powershell
 conda activate acquisition
 cd C:\Users\Patrick\PycharmProjects\ECTNet
-python acquisition/paradigm.py
+python acquisition/paradigm.py              # 默认 15×2 = 30 trials (~4.5min)
+python acquisition/paradigm.py -n 25        # 25×2 = 50 trials (~7min)
+python acquisition/paradigm.py -n 50        # 50×2 = 100 trials (~14min)
 ```
 
-- 屏幕显示指导语，按 **空格** 开始
-- 30 个 trial（15 左手 + 15 右手），约 4.5 分钟
+- 屏幕显示指导语和预估时长，按 **空格** 开始
 - 看到箭头后**想象**对应手的握拳动作，不要真的动
 - 按 **ESC** 可中途退出
 
@@ -112,19 +113,38 @@ acquisition/recordings/recording_YYYYMMDD_HHMMSS.npz
 
 ```powershell
 conda activate acquisition
+# 单个录制文件
 python acquisition/make_dataset.py --input acquisition/recordings/recording_XXXX.npz
+
+# 合并多次录制（推荐：多次短录制比一次长录制质量更好）
+python acquisition/make_dataset.py --input acquisition/recordings/rec1.npz rec2.npz rec3.npz
 ```
 
 输出：
-- `mymat_custom/C01T.mat` — 训练集（24 trials）
-- `mymat_custom/C01E.mat` — 测试集（6 trials）
+- `mymat_custom/C01T.mat` — 训练集（80%）
+- `mymat_custom/C01E.mat` — 测试集（20%）
 
-### 多次录制
+### 推荐采集策略
 
-如果想积累更多数据，重复第 3 步，用不同 subject 编号：
+**短时多轮 > 一次长录**：MI 想象会疲劳，建议每轮 30-40 trial（~5 分钟），休息 2-3 分钟，录 3-4 轮，最后合并。这样既有足够数据（90-160 trial），又避免疲劳影响信号质量。
 
 ```powershell
-python acquisition/make_dataset.py --input recording_第二次.npz --subject 2
+# 例：录 3 轮 × 40 trial，合并后共 120 trial
+python acquisition/paradigm.py -n 20    # 第 1 轮 (40 trials)，休息
+python acquisition/paradigm.py -n 20    # 第 2 轮 (40 trials)，休息
+python acquisition/paradigm.py -n 20    # 第 3 轮 (40 trials)
+# 每轮录完 Ctrl+C recorder，重启 recorder 再开下一轮
+# 最后合并
+python acquisition/make_dataset.py --input recordings/rec1.npz rec2.npz rec3.npz
+```
+
+### 多被试
+
+用 `--subject` 区分不同被试：
+
+```powershell
+python acquisition/make_dataset.py --input patrick_data.npz --subject 1
+python acquisition/make_dataset.py --input teammate_data.npz --subject 2
 ```
 
 ## 5. 训练模型
@@ -165,8 +185,9 @@ python train.py C
 - 检查电极是否贴紧头皮
 
 **Q: trial 数量太少，模型效果差？**
-- 30 trial 确实偏少，建议多录几轮合并
-- 或增加 paradigm.py 里的 `N_TRIALS_PER_CLASS`（如改为 30，则 60 trials/次）
+- 用 `-n` 参数增加每轮 trial 数：`python acquisition/paradigm.py -n 30`（60 trials/轮）
+- 或多录几轮合并：`make_dataset.py --input rec1.npz rec2.npz rec3.npz`
+- 推荐总量 90-160 trial，短时多轮优于一次长录
 
 **Q: 没有 EEG 帽怎么定位电极？**
 - 用卷尺量：鼻根到枕骨粗隆的 50% 处是 Cz
