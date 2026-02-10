@@ -53,10 +53,15 @@ ECTNet = PatchEmbeddingCNN (temporal conv + channel attention + spatial conv) + 
 ECTNet/
 ├── model.py                 # Model architecture (ChannelAttention, PatchEmbeddingCNN, Transformer)
 ├── train.py                 # Training script with parallel subject training (mp.Pool)
-├── utils.py                 # Data loading, metrics, GradCAM
+├── utils.py                 # Data loading, metrics, filtering, GradCAM
 ├── preprocessing/
 │   ├── preprocessing_for_2a.py   # BCI IV-2a: GDF → MAT
 │   └── preprocessing_for_2b.py   # BCI IV-2b: GDF → MAT
+├── acquisition/
+│   ├── paradigm.py               # PsychoPy MI experiment (LSL markers)
+│   ├── recorder.py               # LSL multi-stream recorder (EEG + markers → .npz)
+│   ├── make_dataset.py           # Recording → .mat converter (filter, epoch, split)
+│   └── recordings/               # Recorded .npz files
 ├── experiments/
 │   ├── train_8ch.py              # 8-channel experiment
 │   ├── train_2class.py           # 2-class (left/right)
@@ -65,7 +70,7 @@ ECTNet/
 ├── tools/
 │   └── channel_selector.py       # Channel selection utility
 └── docs/
-    └── research_directions.md    # Research improvement plans
+    └── openbci_setup_guide.md    # OpenBCI Cyton acquisition guide
 ```
 
 ## Quick Start
@@ -99,11 +104,33 @@ python train.py A2
 
 # BCI IV-2b: 3-channel, 2-class
 python train.py B
+
+# Custom OpenBCI data: 8-channel, 2-class
+python train.py C
 ```
 
 Training uses parallel subject processing (N_WORKERS=3) for ~2.2x speedup on multi-core systems.
 
 Bandpass + notch filtering is enabled by default (`APPLY_FILTER=True`) to match real-time inference preprocessing.
+
+### Custom Data Acquisition (OpenBCI Cyton)
+
+Collect your own MI-EEG data with an 8-channel OpenBCI Cyton board. See [`docs/openbci_setup_guide.md`](docs/openbci_setup_guide.md) for full instructions.
+
+```bash
+# Terminal 1: record EEG + markers
+python acquisition/recorder.py
+
+# Terminal 2: run experiment paradigm (30 trials default, configurable)
+python acquisition/paradigm.py
+python acquisition/paradigm.py -n 25    # 50 trials
+
+# Convert recording to training format (supports merging multiple files)
+python acquisition/make_dataset.py --input acquisition/recordings/rec1.npz rec2.npz
+
+# Train on custom data
+python train.py C
+```
 
 ## Reference
 
