@@ -13,6 +13,15 @@ Based on [CTNet](https://github.com/snailpt/CTNet) (Zhao et al., Sci Rep 2024).
 | Accuracy | 86.81 | 71.53 | 90.97 | 78.12 | 77.78 | 63.54 | 88.89 | 85.76 | 86.11 | **81.06** |
 | Kappa | 82.41 | 62.04 | 87.96 | 70.83 | 70.37 | 51.39 | 85.19 | 81.02 | 81.48 | **74.74** |
 
+### BCI Competition IV-2a — 8 channels, 2-class (A2, hardware deployment config)
+
+| Subject | S1 | S2 | S3 | S4 | S5 | S6 | S7 | S8 | S9 | **Mean** |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Accuracy | 86.81 | 76.39 | 98.61 | 84.03 | 92.36 | 78.47 | 88.19 | 95.83 | 91.67 | **88.04** |
+| Kappa | 73.61 | 52.78 | 97.22 | 68.06 | 84.72 | 56.94 | 76.39 | 91.67 | 83.33 | **76.08** |
+
+8 channels selected from sensorimotor cortex: **C3, C4, Cz, FCz, CP1, CP2, FC3, FC4**
+
 ### BCI Competition IV-2b (3 channels, 2-class)
 
 | Subject | S1 | S2 | S3 | S4 | S5 | S6 | S7 | S8 | S9 | **Mean** |
@@ -83,11 +92,11 @@ python preprocessing/preprocessing_for_2b.py
 # BCI IV-2a: 22-channel, 4-class (default)
 python train.py A
 
+# BCI IV-2a: 8-channel, 2-class left/right (hardware deployment)
+python train.py A2
+
 # BCI IV-2b: 3-channel, 2-class
 python train.py B
-
-# 8-channel experiments
-python experiments/train_8ch.py
 ```
 
 Training uses parallel subject processing (N_WORKERS=3) for ~2.2x speedup on multi-core systems.
