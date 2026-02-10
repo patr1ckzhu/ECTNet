@@ -76,6 +76,10 @@ def load_data_evaluate(dir_path, dataset_type, n_sub, mode_evaluate="LOSO", appl
         train_data, train_label = load_data_2class_8ch(dir_path, n_sub, mode='train', apply_filter=apply_filter)
         test_data, test_label = load_data_2class_8ch(dir_path, n_sub, mode='test', apply_filter=apply_filter)
         return train_data, train_label, test_data, test_label
+    if dataset_type == 'C':
+        train_data, train_label = load_data(dir_path, 'C', n_sub, mode='train', apply_filter=apply_filter)
+        test_data, test_label = load_data(dir_path, 'C', n_sub, mode='test', apply_filter=apply_filter)
+        return train_data, train_label, test_data, test_label
     if mode_evaluate=="LOSO":
         return load_data_LOSO(dir_path, dataset_type, n_sub, apply_filter=apply_filter)
     else:
@@ -270,6 +274,9 @@ def numberClassChannel(database_type):
     elif database_type == 'B':
         number_class = 2
         number_channel = 3
+    elif database_type == 'C':
+        number_class = 2
+        number_channel = 8
     return number_class, number_channel
 
 

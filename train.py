@@ -454,7 +454,7 @@ if __name__ == "__main__":
     EMB_DIM = 16
     HEADS = 2
     DEPTH = 6
-    TYPE = sys.argv[1] if len(sys.argv) > 1 else 'A'  # usage: python train.py [A|A2|B]
+    TYPE = sys.argv[1] if len(sys.argv) > 1 else 'A'  # usage: python train.py [A|A2|B|C]
     validate_ratio = 0.3 # split raw train dataset into real train dataset and validate dataset
 
     EEGNet1_F1 = 8
@@ -465,6 +465,12 @@ if __name__ == "__main__":
     FLATTEN_EEGNet1 = 240
     L1_LAMBDA = 1e-4        # L1 regularization for channel attention sparsity
     APPLY_FILTER = True     # bandpass 4-40Hz + notch 50Hz (match real-time inference)
+
+    if TYPE == 'C':
+        DATA_DIR = r'./mymat_custom/'
+        N_SUBJECT = 1
+        APPLY_FILTER = False  # already filtered in make_dataset.py
+        N_WORKERS = 1
 
     if EVALUATE_MODE!='LOSO':
         EEGNet1_DROPOUT_RATE = 0.5
