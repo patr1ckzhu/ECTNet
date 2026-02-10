@@ -34,11 +34,13 @@ def load_data_evaluate(dir_path, dataset_type, n_sub, mode_evaluate="LOSO"):
     dir_path : str
         The directory name where the data is stored.
     dataset_type : str
-        The value in ['A', 'B'], 'A' denotes BCI IV-2a dataset, and 'B' denotes BCI IV-2b dataset.
+        The value in ['A', 'A2', 'B'].
+        'A' = BCI IV-2a (22ch, 4-class), 'A2' = BCI IV-2a (8ch, 2-class left/right),
+        'B' = BCI IV-2b (3ch, 2-class).
     n_sub : int
         The number of subject, the scope range from 1 to 9.
     mode_evaluate : str, optional
-        The mode of evaluation. The default is "LOSO" for cross-subject classification. Other value represents subject-specific classification. 
+        The mode of evaluation. The default is "LOSO" for cross-subject classification. Other value represents subject-specific classification.
 
     Returns
     -------
@@ -46,6 +48,10 @@ def load_data_evaluate(dir_path, dataset_type, n_sub, mode_evaluate="LOSO"):
         DESCRIPTION.
 
     '''
+    if dataset_type == 'A2':
+        train_data, train_label = load_data_2class_8ch(dir_path, n_sub, mode='train')
+        test_data, test_label = load_data_2class_8ch(dir_path, n_sub, mode='test')
+        return train_data, train_label, test_data, test_label
     if mode_evaluate=="LOSO":
         return load_data_LOSO(dir_path, dataset_type, n_sub)
     else:
@@ -225,16 +231,34 @@ def calculatePerClass(data_dict, metric_name='Precision'):
 
 
 def numberClassChannel(database_type):
-    if database_type=='A':
+    if database_type == 'A':
         number_class = 4
         number_channel = 22
-    elif database_type=='B':
+    elif database_type == 'A2':
+        number_class = 2
+        number_channel = 8
+    elif database_type == 'B':
         number_class = 2
         number_channel = 3
-#    elif database_type=='C':
-#        number_class = 4
-#        number_channel = 128
     return number_class, number_channel
+
+
+# 8-channel selection from 22ch BCI IV-2a (sensorimotor cortex, validated best for MI)
+# C3(7), FC3(1), FC4(5), FCz(3), Cz(9), C4(11), CP1(14), CP2(16)
+CHANNELS_8CH_INDICES = [7, 11, 9, 3, 14, 16, 1, 5]
+CHANNELS_8CH_NAMES = ['C3', 'C4', 'Cz', 'FCz', 'CP1', 'CP2', 'FC3', 'FC4']
+
+
+def load_data_2class_8ch(dir_path, n_sub, mode='train'):
+    """Load BCI IV-2a data, filter left/right hand only, select 8 channels."""
+    data, label = load_data(dir_path, 'A', n_sub, mode=mode)
+    # Filter: keep only left hand (1) and right hand (2)
+    mask = np.isin(label, [1, 2]).flatten()
+    data = data[mask]
+    label = label[mask]
+    # Select 8 channels from 22
+    data = data[:, CHANNELS_8CH_INDICES, :]
+    return data, label
 
 
 

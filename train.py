@@ -446,7 +446,7 @@ if __name__ == "__main__":
     EMB_DIM = 16
     HEADS = 2
     DEPTH = 6
-    TYPE = sys.argv[1] if len(sys.argv) > 1 else 'A'  # usage: python train.py [A|B]
+    TYPE = sys.argv[1] if len(sys.argv) > 1 else 'A'  # usage: python train.py [A|A2|B]
     validate_ratio = 0.3 # split raw train dataset into real train dataset and validate dataset
 
     EEGNet1_F1 = 8
