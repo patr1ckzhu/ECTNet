@@ -2,16 +2,18 @@
 PsychoPy Motor Imagery Experiment Paradigm
 
 Displays left/right arrow cues and sends LSL markers for EEG recording.
-30 trials (15 left + 15 right), ~4.5 min total.
 
 Usage:
-    python acquisition/paradigm.py
+    python acquisition/paradigm.py              # default 15 per class = 30 trials
+    python acquisition/paradigm.py -n 25        # 25 per class = 50 trials
+    python acquisition/paradigm.py -n 50        # 50 per class = 100 trials
 
 Controls:
     SPACE - start experiment
     ESC   - abort
 """
 
+import argparse
 import random
 import numpy as np
 from psychopy import visual, core, event
@@ -19,7 +21,6 @@ from pylsl import StreamInfo, StreamOutlet
 
 
 # --- Configuration ---
-N_TRIALS_PER_CLASS = 15
 FIXATION_RANGE = (1.5, 2.5)   # seconds
 CUE_DURATION = 4.0            # seconds
 REST_RANGE = (2.0, 3.0)       # seconds
@@ -28,14 +29,17 @@ MARKER_LEFT = 1
 MARKER_RIGHT = 2
 
 
-def make_trial_list():
-    """Create shuffled list of trials: 15 left + 15 right."""
-    trials = [MARKER_LEFT] * N_TRIALS_PER_CLASS + [MARKER_RIGHT] * N_TRIALS_PER_CLASS
+def make_trial_list(n_per_class):
+    """Create shuffled list of trials: n left + n right."""
+    trials = [MARKER_LEFT] * n_per_class + [MARKER_RIGHT] * n_per_class
     random.shuffle(trials)
     return trials
 
 
-def run():
+def run(n_per_class=15):
+    total = n_per_class * 2
+    est_min = total * 8.5 / 60  # rough estimate: ~8.5s per trial
+
     # --- LSL marker outlet ---
     info = StreamInfo('MI-Markers', 'Markers', 1, 0, 'int32', 'paradigm_mi')
     outlet = StreamOutlet(info)
@@ -50,6 +54,7 @@ def run():
         'Motor Imagery Experiment\n\n'
         'When you see an arrow, imagine moving that hand.\n'
         '\u2190 = left hand    \u2192 = right hand\n\n'
+        f'{total} trials (~{est_min:.1f} min)\n\n'
         'Press SPACE to start'
     ), height=0.04, color='white', wrapWidth=1.5)
     end_text = visual.TextStim(win, text='Experiment complete.\nThank you!',
@@ -60,8 +65,7 @@ def run():
     win.flip()
     event.waitKeys(keyList=['space'])
 
-    trials = make_trial_list()
-    clock = core.Clock()
+    trials = make_trial_list(n_per_class)
 
     for i, marker in enumerate(trials):
         # Check for ESC
@@ -100,4 +104,9 @@ def run():
 
 
 if __name__ == '__main__':
-    run()
+    parser = argparse.ArgumentParser(description='MI Experiment Paradigm')
+    parser.add_argument('-n', '--n-per-class', type=int, default=15,
+                        help='Number of trials per class (default: 15, total = 2x)')
+    args = parser.parse_args()
+    print(f'Trials: {args.n_per_class} per class = {args.n_per_class * 2} total')
+    run(n_per_class=args.n_per_class)

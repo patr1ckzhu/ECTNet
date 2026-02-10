@@ -6,6 +6,7 @@ into train/test sets compatible with the ECTNet training pipeline.
 
 Usage:
     python acquisition/make_dataset.py --input acquisition/recordings/recording_XXXX.npz
+    python acquisition/make_dataset.py --input rec1.npz rec2.npz rec3.npz   # merge multiple runs
     python acquisition/make_dataset.py --input recording.npz --subject 2 --test-size 0.3
 """
 
@@ -79,23 +80,37 @@ def extract_epochs(rec):
 
 def main():
     parser = argparse.ArgumentParser(description='Convert recording to .mat training files')
-    parser.add_argument('--input', required=True, help='Path to .npz recording file')
+    parser.add_argument('--input', required=True, nargs='+', help='Path to .npz recording file(s), multiple files will be merged')
     parser.add_argument('--subject', type=int, default=1, help='Subject number (default: 1)')
     parser.add_argument('--test-size', type=float, default=0.2, help='Test split ratio (default: 0.2)')
     args = parser.parse_args()
 
-    # Load and extract epochs
-    print(f'Loading: {args.input}')
-    rec = load_recording(args.input)
-    print(f'  EEG: {rec["eeg_data"].shape[0]} samples @ {rec["srate"]} Hz')
-    print(f'  Markers: {len(rec["markers"])}')
+    # Load and extract epochs from all input files
+    all_epochs = []
+    all_labels = []
+    srate = None
 
-    epochs, labels = extract_epochs(rec)
-    print(f'  Extracted: {len(epochs)} epochs, shape {epochs.shape}')
+    for path in args.input:
+        print(f'Loading: {path}')
+        rec = load_recording(path)
+        print(f'  EEG: {rec["eeg_data"].shape[0]} samples @ {rec["srate"]} Hz')
+        print(f'  Markers: {len(rec["markers"])}')
+        srate = int(rec['srate'])
+
+        epochs, labels = extract_epochs(rec)
+        print(f'  Extracted: {len(epochs)} epochs, shape {epochs.shape}')
+        all_epochs.append(epochs)
+        all_labels.append(labels)
+
+    epochs = np.concatenate(all_epochs)
+    labels = np.concatenate(all_labels)
+
+    if len(args.input) > 1:
+        print(f'\nMerged: {len(epochs)} total epochs from {len(args.input)} files')
 
     # Apply EEG filtering (bandpass 4-40Hz + notch 50Hz)
     print('  Filtering: bandpass 4-40Hz + notch 50Hz')
-    epochs = eeg_filter(epochs, fs=int(rec['srate']))
+    epochs = eeg_filter(epochs, fs=srate)
 
     # Summary
     unique, counts = np.unique(labels, return_counts=True)
