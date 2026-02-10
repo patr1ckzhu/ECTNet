@@ -20,6 +20,9 @@ __pycache__/
 .vscode/
 *.swp
 
+# Private docs
+docs/research_directions.md
+
 # Claude Code
 .claude/
 
