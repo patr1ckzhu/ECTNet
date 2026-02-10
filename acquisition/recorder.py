@@ -14,7 +14,7 @@ import time
 import datetime
 import os
 import numpy as np
-from pylsl import resolve_streams, StreamInlet
+from pylsl import resolve_byprop, StreamInlet
 
 
 RECORDINGS_DIR = os.path.join(os.path.dirname(__file__), 'recordings')
@@ -23,7 +23,7 @@ RECORDINGS_DIR = os.path.join(os.path.dirname(__file__), 'recordings')
 def resolve_eeg_stream(name='obci_eeg1', timeout=30):
     """Resolve EEG stream by name."""
     print(f'Resolving EEG stream "{name}"...')
-    streams = resolve_streams('name', name, minimum=1, timeout=timeout)
+    streams = resolve_byprop('name', name, minimum=1, timeout=timeout)
     if not streams:
         raise RuntimeError(f'No EEG stream "{name}" found within {timeout}s')
     inlet = StreamInlet(streams[0], max_chunklen=64)
@@ -39,7 +39,7 @@ def resolve_eeg_stream(name='obci_eeg1', timeout=30):
 def resolve_marker_stream(name='MI-Markers', timeout=5):
     """Resolve marker stream. Returns None if not found (starts recording anyway)."""
     print(f'Resolving marker stream "{name}"...')
-    streams = resolve_streams('name', name, minimum=1, timeout=timeout)
+    streams = resolve_byprop('name', name, minimum=1, timeout=timeout)
     if not streams:
         print(f'Marker stream "{name}" not found — recording EEG only (start paradigm.py to send markers)')
         return None
