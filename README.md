@@ -44,6 +44,8 @@ ECTNet = PatchEmbeddingCNN (temporal conv + channel attention + spatial conv) + 
 - **Temporal Conv**: EEGNet-inspired, extracts frequency features per channel
 - **Spatial Conv**: Depth-wise, fuses across EEG electrodes
 - **Transformer**: Multi-head self-attention on temporal patches
+- **Preprocessing**: Optional bandpass (4-40Hz) + notch (50Hz) filtering via `eeg_filter()`, shared between training and inference
+- **Checkpoint**: Saves model + normalization params (mean/std) for deployment
 
 ## Project Structure
 
@@ -100,6 +102,8 @@ python train.py B
 ```
 
 Training uses parallel subject processing (N_WORKERS=3) for ~2.2x speedup on multi-core systems.
+
+Bandpass + notch filtering is enabled by default (`APPLY_FILTER=True`) to match real-time inference preprocessing.
 
 ## Reference
 

@@ -20,12 +20,39 @@ from sklearn.metrics import cohen_kappa_score
 import numpy as np
 import pandas as pd
 import scipy
+import scipy.signal
 import os
 import shutil
 
 
+# ==================== EEG Filtering ====================
+FS = 250  # sampling rate (Hz), shared between training and inference
 
-def load_data_evaluate(dir_path, dataset_type, n_sub, mode_evaluate="LOSO"):
+def eeg_filter(data, fs=FS, bandpass=(4, 40), notch=50):
+    """Apply bandpass and notch filter to EEG data.
+
+    Used in both training preprocessing and real-time inference to ensure consistency.
+
+    Args:
+        data: (..., n_samples) — any shape, filtering applied on last axis
+        fs: sampling rate in Hz
+        bandpass: (low, high) cutoff frequencies, None to skip
+        notch: notch filter frequency in Hz (50 for UK/EU, 60 for US), None to skip
+
+    Returns:
+        filtered data, same shape as input
+    """
+    filtered = data.astype(np.float64)
+    if bandpass is not None:
+        b, a = scipy.signal.butter(4, bandpass, btype='band', fs=fs)
+        filtered = scipy.signal.filtfilt(b, a, filtered, axis=-1)
+    if notch is not None and notch < fs / 2:
+        b_n, a_n = scipy.signal.iirnotch(notch, Q=30, fs=fs)
+        filtered = scipy.signal.filtfilt(b_n, a_n, filtered, axis=-1)
+    return filtered.astype(np.float32)
+
+
+def load_data_evaluate(dir_path, dataset_type, n_sub, mode_evaluate="LOSO", apply_filter=False):
     '''
     Load the Corresponding Dataset Based on the Evaluation Mode
 
@@ -40,25 +67,22 @@ def load_data_evaluate(dir_path, dataset_type, n_sub, mode_evaluate="LOSO"):
     n_sub : int
         The number of subject, the scope range from 1 to 9.
     mode_evaluate : str, optional
-        The mode of evaluation. The default is "LOSO" for cross-subject classification. Other value represents subject-specific classification.
-
-    Returns
-    -------
-    TYPE
-        DESCRIPTION.
+        The mode of evaluation. The default is "LOSO" for cross-subject classification.
+    apply_filter : bool
+        Whether to apply bandpass (4-40Hz) + notch (50Hz) filtering.
 
     '''
     if dataset_type == 'A2':
-        train_data, train_label = load_data_2class_8ch(dir_path, n_sub, mode='train')
-        test_data, test_label = load_data_2class_8ch(dir_path, n_sub, mode='test')
+        train_data, train_label = load_data_2class_8ch(dir_path, n_sub, mode='train', apply_filter=apply_filter)
+        test_data, test_label = load_data_2class_8ch(dir_path, n_sub, mode='test', apply_filter=apply_filter)
         return train_data, train_label, test_data, test_label
     if mode_evaluate=="LOSO":
-        return load_data_LOSO(dir_path, dataset_type, n_sub)
+        return load_data_LOSO(dir_path, dataset_type, n_sub, apply_filter=apply_filter)
     else:
-        return load_data_subject_dependent(dir_path, dataset_type, n_sub)
+        return load_data_subject_dependent(dir_path, dataset_type, n_sub, apply_filter=apply_filter)
 
 
-def load_data_subject_dependent(dir_path, dataset_type, n_sub):
+def load_data_subject_dependent(dir_path, dataset_type, n_sub, apply_filter=False):
     '''
     Load data for subject-specific classification
 
@@ -70,23 +94,25 @@ def load_data_subject_dependent(dir_path, dataset_type, n_sub):
         The value in ['A', 'B'], 'A' denotes BCI IV-2a dataset, and 'B' denotes BCI IV-2b dataset.
     n_sub : int
         The number of subject, the scope range from 1 to 9.
+    apply_filter : bool
+        Whether to apply bandpass (4-40Hz) + notch (50Hz) filtering.
 
     '''
-    train_data, train_label = load_data(dir_path, dataset_type, n_sub, mode='train')
-    test_data, test_label = load_data(dir_path, dataset_type, n_sub, mode='test')
+    train_data, train_label = load_data(dir_path, dataset_type, n_sub, mode='train', apply_filter=apply_filter)
+    test_data, test_label = load_data(dir_path, dataset_type, n_sub, mode='test', apply_filter=apply_filter)
     return train_data, train_label, test_data, test_label
 
 
-def load_data_LOSO(dir_path, dataset_type, subject): 
-    """ Loading and Dividing of the data set based on the 
-    'Leave One Subject Out' (LOSO) evaluation approach. 
+def load_data_LOSO(dir_path, dataset_type, subject, apply_filter=False):
+    """ Loading and Dividing of the data set based on the
+    'Leave One Subject Out' (LOSO) evaluation approach.
     LOSO is used for  Subject-independent evaluation.
-    In LOSO, the model is trained and evaluated by several folds, equal to the 
+    In LOSO, the model is trained and evaluated by several folds, equal to the
     number of subjects, and for each fold, one subject is used for evaluation
-    and the others for training. The LOSO evaluation technique ensures that 
-    separate subjects (not visible in the training data) are usedto evaluate 
-    the model. 
-   
+    and the others for training. The LOSO evaluation technique ensures that
+    separate subjects (not visible in the training data) are usedto evaluate
+    the model.
+
         Parameters
         ----------
         dir_path: string
@@ -98,12 +124,12 @@ def load_data_LOSO(dir_path, dataset_type, subject):
             Here, the subject data is used  test the model and other subjects data
             for training
     """
-    
+
     X_train, y_train = np.empty([0, 3]), np.empty([0, 3])
     for n_sub in range (1, 10):
-        
-        X1, y1 = load_data(dir_path, dataset_type, n_sub, mode='train')
-        X2, y2 = load_data(dir_path, dataset_type, n_sub, mode='test')
+
+        X1, y1 = load_data(dir_path, dataset_type, n_sub, mode='train', apply_filter=apply_filter)
+        X2, y2 = load_data(dir_path, dataset_type, n_sub, mode='test', apply_filter=apply_filter)
         X = np.concatenate((X1, X2), axis=0)
         y = np.concatenate((y1, y2), axis=0)
                    
@@ -120,7 +146,7 @@ def load_data_LOSO(dir_path, dataset_type, subject):
     return X_train, y_train, X_test, y_test
 
 
-def load_data(dir_path, dataset_type, n_sub, mode='train'):
+def load_data(dir_path, dataset_type, n_sub, mode='train', apply_filter=False):
     '''
     加载mat格式的数据返回data和label的ndarray
 
@@ -129,11 +155,13 @@ def load_data(dir_path, dataset_type, n_sub, mode='train'):
     dir_path : str
         The directory name where the data is stored.
     dataset_type : str
-        The value in ['A', 'B'], 'A' denotes BCI IV-2a dataset, and 'B' denotes BCI IV-2b dataset.
+        The value in ['A', 'A2', 'B'].
     n_sub : int
         The number of subject, the scope range from 1 to 9.
     mode : str
         The value in ['train', 'test'], for loading train or test dataset.
+    apply_filter : bool
+        Whether to apply bandpass (4-40Hz) + notch (50Hz) filtering.
 
     Returns
     -------
@@ -148,7 +176,9 @@ def load_data(dir_path, dataset_type, n_sub, mode='train'):
         mode_s = 'E'
     data_mat = scipy.io.loadmat(dir_path + '{}{:02d}{}.mat'.format(dataset_type, n_sub, mode_s))
     data = data_mat['data']  # (288, 22, 1000)
-    label =data_mat['label']
+    label = data_mat['label']
+    if apply_filter:
+        data = eeg_filter(data)
     return data, label
 
 
@@ -249,9 +279,9 @@ CHANNELS_8CH_INDICES = [7, 11, 9, 3, 14, 16, 1, 5]
 CHANNELS_8CH_NAMES = ['C3', 'C4', 'Cz', 'FCz', 'CP1', 'CP2', 'FC3', 'FC4']
 
 
-def load_data_2class_8ch(dir_path, n_sub, mode='train'):
+def load_data_2class_8ch(dir_path, n_sub, mode='train', apply_filter=False):
     """Load BCI IV-2a data, filter left/right hand only, select 8 channels."""
-    data, label = load_data(dir_path, 'A', n_sub, mode=mode)
+    data, label = load_data(dir_path, 'A', n_sub, mode=mode, apply_filter=apply_filter)
     # Filter: keep only left hand (1) and right hand (2)
     mask = np.isin(label, [1, 2]).flatten()
     data = data[mask]

@@ -52,10 +52,12 @@ class ExP():
                  learning_rate = 0.001,
                  batch_size = 72,       # each batch of raw train dataset, real training batchsize =  batch_size * (1 + N_AUG) for additional data augmentation.
                  l1_lambda = 1e-4,      # L1 regularization weight for channel attention sparsity
+                 apply_filter = False,  # apply bandpass (4-40Hz) + notch (50Hz) filtering
                  ):
 
         super(ExP, self).__init__()
         self.dataset_type = dataset_type
+        self.apply_filter = apply_filter
         self.batch_size = batch_size
         self.lr = learning_rate
         self.b1 = 0.5
@@ -135,7 +137,7 @@ class ExP():
         (self.train_data,    # (batch, channel, length)
          self.train_label,
          self.test_data,
-         self.test_label) = load_data_evaluate(self.root, self.dataset_type, self.nSub, mode_evaluate=self.evaluate_mode)
+         self.test_label) = load_data_evaluate(self.root, self.dataset_type, self.nSub, mode_evaluate=self.evaluate_mode, apply_filter=self.apply_filter)
 
         self.train_data = np.expand_dims(self.train_data, axis=1)  # (288, 1, 22, 1000)
         self.train_label = np.transpose(self.train_label)
@@ -156,11 +158,11 @@ class ExP():
         self.testLabel = self.test_label[0]
 
 
-        # standardize
-        target_mean = np.mean(self.allData)
-        target_std = np.std(self.allData)
-        self.allData = (self.allData - target_mean) / target_std
-        self.testData = (self.testData - target_mean) / target_std
+        # standardize (save params for real-time inference)
+        self.norm_mean = np.mean(self.allData)
+        self.norm_std = np.std(self.allData)
+        self.allData = (self.allData - self.norm_mean) / self.norm_std
+        self.testData = (self.testData - self.norm_mean) / self.norm_std
 
         # data shape: (trial, conv channel, electrode channel, time samples)
         return self.allData, self.allLabel, self.testData, self.testLabel
@@ -257,15 +259,20 @@ class ExP():
                     min_loss = val_loss
                     best_epoch = e
                     epoch_process['epoch'] = e
-                    torch.save(self.model, self.model_filename)
+                    torch.save({
+                        'model': self.model,
+                        'norm_mean': self.norm_mean,
+                        'norm_std': self.norm_std,
+                    }, self.model_filename)
                     print("{}_{} train_acc: {:.4f} train_loss: {:.6f}\tval_acc: {:.6f} val_loss: {:.7f}".format(
                         self.nSub, e, train_acc, loss.item(), val_acc, val_loss.item()))
 
             result_process.append(epoch_process)
 
         # load model for test
+        checkpoint = torch.load(self.model_filename, weights_only=False)
+        self.model = checkpoint['model'].cuda()
         self.model.eval()
-        self.model = torch.load(self.model_filename, weights_only=False).cuda()
         outputs_list = []
         with torch.no_grad():
             for i, (img, label) in enumerate(self.test_dataloader):
@@ -353,6 +360,7 @@ def main(dirs,
          validate_ratio = 0.2,
          l1_lambda = 1e-4,
          n_workers = 1,       # number of parallel subject workers (1=sequential)
+         apply_filter = False, # apply bandpass (4-40Hz) + notch (50Hz) filtering
          ):
 
     if not os.path.exists(dirs):
@@ -366,7 +374,7 @@ def main(dirs,
                   eeg1_pooling_size2=eeg1_pooling_size2,
                   eeg1_dropout_rate=eeg1_dropout_rate,
                   flatten_eeg1=flatten_eeg1, validate_ratio=validate_ratio,
-                  l1_lambda=l1_lambda)
+                  l1_lambda=l1_lambda, apply_filter=apply_filter)
 
     # Generate deterministic seeds for each subject upfront
     rng = np.random.RandomState(42)
@@ -456,6 +464,7 @@ if __name__ == "__main__":
     EEGNet1_POOL_SIZE2 = 8
     FLATTEN_EEGNet1 = 240
     L1_LAMBDA = 1e-4        # L1 regularization for channel attention sparsity
+    APPLY_FILTER = True     # bandpass 4-40Hz + notch 50Hz (match real-time inference)
 
     if EVALUATE_MODE!='LOSO':
         EEGNet1_DROPOUT_RATE = 0.5
@@ -500,5 +509,6 @@ if __name__ == "__main__":
                     validate_ratio = validate_ratio,
                     l1_lambda = L1_LAMBDA,
                     n_workers = N_WORKERS,
+                    apply_filter = APPLY_FILTER,
                   )
     print(time.asctime(time.localtime(time.time())))
