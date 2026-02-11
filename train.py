@@ -157,7 +157,6 @@ class ExP():
         self.testData = self.test_data
         self.testLabel = self.test_label[0]
 
-
         # standardize (save params for real-time inference)
         self.norm_mean = np.mean(self.allData)
         self.norm_std = np.std(self.allData)
@@ -199,20 +198,24 @@ class ExP():
         val_label_t = label[val_indices].type(self.LongTensor)
 
         # Compile model for faster execution (PyTorch 2.x, Linux only — Triton not available on Windows)
+        # reduce-overhead uses CUDA graphs to minimize kernel launch overhead (main bottleneck for small models)
         import platform
         if platform.system() != 'Windows':
-            compiled_model = torch.compile(self.model)
+            compiled_model = torch.compile(self.model, mode='reduce-overhead')
         else:
             compiled_model = self.model
 
         best_epoch = 0
         min_loss = 100
         result_process = []
+        epoch_times = []
+        train_start = time.time()
         self.dataloader = torch.utils.data.DataLoader(
             dataset=train_dataset, batch_size=self.batch_size, shuffle=True,
             pin_memory=False, drop_last=False)
 
         for e in range(self.n_epochs):
+            epoch_start = time.time()
             epoch_process = {'epoch': e}
             compiled_model.train()
 
@@ -267,7 +270,14 @@ class ExP():
                     print("{}_{} train_acc: {:.4f} train_loss: {:.6f}\tval_acc: {:.6f} val_loss: {:.7f}".format(
                         self.nSub, e, train_acc, loss.item(), val_acc, val_loss.item()))
 
+            epoch_time = time.time() - epoch_start
+            epoch_times.append(epoch_time)
             result_process.append(epoch_process)
+
+        total_time = time.time() - train_start
+        avg_epoch = sum(epoch_times) / len(epoch_times)
+        print(f"[S{self.nSub}] Training done: {total_time:.1f}s total, {avg_epoch:.3f}s/epoch avg, "
+              f"first={epoch_times[0]:.3f}s, last={epoch_times[-1]:.3f}s")
 
         # load model for test
         checkpoint = torch.load(self.model_filename, weights_only=False)
@@ -386,6 +396,7 @@ def main(dirs,
     ]
 
     # Train subjects (parallel or sequential)
+    total_start = time.time()
     if n_workers > 1:
         ctx = mp.get_context('spawn')
         with ctx.Pool(processes=n_workers) as pool:
@@ -434,6 +445,8 @@ def main(dirs,
     df_result.to_excel(result_write_metric, index=False)
     print('-'*9, ' all result ', '-'*9)
     print(df_result)
+    total_elapsed = time.time() - total_start
+    print(f"\nTotal training time: {total_elapsed/60:.1f} min ({total_elapsed:.0f}s)")
     print("*"*40)
     result_write_metric.close()
 
@@ -464,7 +477,7 @@ if __name__ == "__main__":
     EEGNet1_POOL_SIZE2 = 8
     FLATTEN_EEGNet1 = 240
     L1_LAMBDA = 1e-4        # L1 regularization for channel attention sparsity
-    APPLY_FILTER = True     # bandpass 4-40Hz + notch 50Hz (match real-time inference)
+    APPLY_FILTER = False    # BCI IV data doesn't need filtering; custom data filtered in make_dataset.py
 
     if TYPE == 'C':
         DATA_DIR = r'./mymat_custom/'

@@ -109,9 +109,7 @@ python train.py B
 python train.py C
 ```
 
-Training uses parallel subject processing (N_WORKERS=3) for ~2.2x speedup on multi-core systems.
-
-Bandpass + notch filtering is enabled by default (`APPLY_FILTER=True`) to match real-time inference preprocessing.
+Training uses `torch.compile(mode='reduce-overhead')` (CUDA graphs, Linux) + parallel subject processing (N_WORKERS=3). On RTX 5080: A2(8ch) ~3min, A(22ch) ~10min, B(3ch) ~7min for all 9 subjects.
 
 ### Custom Data Acquisition (OpenBCI Cyton)
 
