@@ -83,6 +83,8 @@ def main():
     parser.add_argument('--input', required=True, nargs='+', help='Path to .npz recording file(s), multiple files will be merged')
     parser.add_argument('--subject', type=int, default=1, help='Subject number (default: 1)')
     parser.add_argument('--test-size', type=float, default=0.2, help='Test split ratio (default: 0.2)')
+    parser.add_argument('--channels', type=str, default=None,
+                        help='Comma-separated channel indices to keep, e.g. "0,1,2" for first 3 channels (C3,Cz,C4)')
     args = parser.parse_args()
 
     # Load and extract epochs from all input files
@@ -107,6 +109,12 @@ def main():
 
     if len(args.input) > 1:
         print(f'\nMerged: {len(epochs)} total epochs from {len(args.input)} files')
+
+    # Select channels if specified
+    if args.channels is not None:
+        ch_idx = [int(c) for c in args.channels.split(',')]
+        epochs = epochs[:, ch_idx, :]
+        print(f'  Channel selection: {ch_idx} → {epochs.shape[1]} channels')
 
     # Apply EEG filtering (bandpass 4-40Hz + notch 50Hz)
     print('  Filtering: bandpass 4-40Hz + notch 50Hz')
