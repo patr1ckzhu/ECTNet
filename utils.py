@@ -276,7 +276,7 @@ def numberClassChannel(database_type):
         number_channel = 3
     elif database_type == 'C':
         number_class = 2
-        number_channel = 8
+        number_channel = 3
     return number_class, number_channel
 
 
