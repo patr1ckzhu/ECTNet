@@ -69,7 +69,12 @@ def record():
                 eeg_data.extend(chunk)
                 eeg_timestamps.extend(ts)
 
-            # Pull markers (non-blocking)
+            # Pull markers (non-blocking), retry resolving if not connected yet
+            if marker_inlet is None:
+                streams = resolve_byprop('name', 'MI-Markers', minimum=1, timeout=0.1)
+                if streams:
+                    marker_inlet = StreamInlet(streams[0])
+                    print('Marker stream connected (paradigm.py started)')
             if marker_inlet is not None:
                 sample, ts_m = marker_inlet.pull_sample(timeout=0.0)
                 if sample is not None:
