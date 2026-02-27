@@ -223,7 +223,7 @@ class PositioinalEncoding(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.encoding = nn.Parameter(torch.randn(1, length, embedding))
     def forward(self, x): # x-> [batch, embedding, length]
-        x = x + self.encoding[:, :x.shape[1], :].cuda()
+        x = x + self.encoding[:, :x.shape[1], :].to(x.device)
         return self.dropout(x)
 
 
