@@ -49,21 +49,24 @@ def load_model(model_path, device='cpu'):
     from model import EEGTransformer
 
     ckpt = torch.load(model_path, map_location=device, weights_only=False)
-    state_dict = ckpt['model']
+    saved_model = ckpt['model']
     norm_mean = ckpt.get('norm_mean')
     norm_std = ckpt.get('norm_std')
 
-    # Build model matching 3ch 2-class config (same as type B/C)
-    model = EEGTransformer(
-        heads=2, emb_size=16, depth=6,
-        database_type='C',
-        eeg1_f1=8, eeg1_D=2, eeg1_kernel_size=64,
-        eeg1_pooling_size1=8, eeg1_pooling_size2=8,
-        eeg1_dropout_rate=0.5,
-        eeg1_number_channel=3,
-        flatten_eeg1=240,
-    )
-    model.load_state_dict(state_dict)
+    # Handle both state_dict and full model object
+    if isinstance(saved_model, dict):
+        model = EEGTransformer(
+            heads=2, emb_size=16, depth=6,
+            database_type='C',
+            eeg1_f1=8, eeg1_D=2, eeg1_kernel_size=64,
+            eeg1_pooling_size1=8, eeg1_pooling_size2=8,
+            eeg1_dropout_rate=0.5,
+            eeg1_number_channel=3,
+            flatten_eeg1=240,
+        )
+        model.load_state_dict(saved_model)
+    else:
+        model = saved_model
     model.to(device)
     model.eval()
     return model, norm_mean, norm_std
