@@ -156,7 +156,9 @@ def main():
 
                 with torch.no_grad():
                     logits = model(x)
-                    probs = torch.nn.functional.softmax(logits, dim=1).cpu().numpy()[0]
+                    if isinstance(logits, tuple):
+                        logits = logits[0]
+                    probs = logits.softmax(dim=1).cpu().numpy()[0]
                     pred = int(np.argmax(probs))
 
                 label = 'LEFT ' if pred == 0 else 'RIGHT'
