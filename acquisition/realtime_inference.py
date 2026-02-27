@@ -155,9 +155,8 @@ def main():
                 x = torch.from_numpy(window).float().unsqueeze(0).unsqueeze(0).to(device)
 
                 with torch.no_grad():
-                    logits = model(x)
-                    if isinstance(logits, tuple):
-                        logits = logits[0]
+                    output = model(x)
+                    logits = output[1] if isinstance(output, tuple) else output
                     probs = logits.softmax(dim=1).cpu().numpy()[0]
                     pred = int(np.argmax(probs))
 
