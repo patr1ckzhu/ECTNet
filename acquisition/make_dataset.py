@@ -55,6 +55,20 @@ def extract_epochs(rec):
     if len(markers) == 0:
         raise ValueError('No markers found in recording')
 
+    # Fix cross-machine clock offset: align marker timestamps to EEG clock
+    # by matching relative time from first marker to EEG timeline
+    clock_offset = marker_ts[0] - eeg_ts[0]
+    if abs(clock_offset) > 1000:  # clocks differ by >1000s → different machines
+        # Use relative timing: assume first marker is within the EEG recording
+        eeg_duration = eeg_ts[-1] - eeg_ts[0]
+        marker_span = marker_ts[-1] - marker_ts[0]
+        # Align first marker to its proportional position in the EEG stream
+        # Markers should start some time after EEG recording starts
+        # Use the marker intervals relative to first marker, offset into EEG
+        first_marker_eeg_time = eeg_ts[0] + (eeg_duration - marker_span) / 2
+        marker_ts = marker_ts - marker_ts[0] + first_marker_eeg_time
+        print(f'  Clock offset detected ({clock_offset:.0f}s), realigned markers to EEG timeline')
+
     epochs = []
     labels = []
     n_dropped = 0
@@ -100,6 +114,12 @@ def main():
         srate = int(rec['srate'])
 
         epochs, labels = extract_epochs(rec)
+        # Select channels immediately (so files with different ch counts can merge)
+        if args.channels is not None:
+            ch_idx = [int(c) for c in args.channels.split(',')]
+            if epochs.shape[1] > len(ch_idx):
+                epochs = epochs[:, ch_idx, :]
+                print(f'  Channel selection: {ch_idx} → {epochs.shape[1]} channels')
         print(f'  Extracted: {len(epochs)} epochs, shape {epochs.shape}')
         all_epochs.append(epochs)
         all_labels.append(labels)
@@ -109,12 +129,6 @@ def main():
 
     if len(args.input) > 1:
         print(f'\nMerged: {len(epochs)} total epochs from {len(args.input)} files')
-
-    # Select channels if specified
-    if args.channels is not None:
-        ch_idx = [int(c) for c in args.channels.split(',')]
-        epochs = epochs[:, ch_idx, :]
-        print(f'  Channel selection: {ch_idx} → {epochs.shape[1]} channels')
 
     # Apply EEG filtering (bandpass 4-40Hz + notch 50Hz)
     print('  Filtering: bandpass 4-40Hz + notch 50Hz')
