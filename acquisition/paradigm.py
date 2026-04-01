@@ -26,7 +26,7 @@ from pylsl import StreamInfo, StreamOutlet
 FIXATION_RANGE = (1.5, 2.5)   # seconds
 CUE_DURATION = 4.0            # seconds
 REST_RANGE = (2.0, 3.0)       # seconds
-BLOCK_SIZE = 20               # trials per block before break
+BLOCK_SIZE = 15               # trials per block before break
 BREAK_DURATION = 30           # break duration in seconds
 
 MARKER_LEFT = 1
@@ -61,10 +61,11 @@ def run(n_per_class=15, block_size=BLOCK_SIZE):
         'Motor Imagery Experiment\n\n'
         'When you see an arrow, imagine moving that hand.\n'
         '\u2190 = left hand    \u2192 = right hand\n\n'
-        'Tips:\n'
-        '- Close your eyes slightly and focus on the feeling in your hand\n'
-        '- Imagine clenching your fist, not just "seeing" it move\n'
-        '- Stay relaxed, do not actually move your hand\n\n'
+        '要点:\n'
+        '- 开始前先实际握拳3次，记住肌肉发力的感觉\n'
+        '- 看到箭头后，想象同样的握拳感觉，但不要真的动\n'
+        '- 专注于手掌和前臂的肌肉感觉，不要想画面\n'
+        '- 保持身体放松，不要咬牙、皱眉、耸肩\n\n'
         f'{total} trials ({n_blocks} blocks of {block_size}) ~{est_min:.1f} min\n\n'
         'Press SPACE to start'
     ), height=0.035, color='white', wrapWidth=1.5)
