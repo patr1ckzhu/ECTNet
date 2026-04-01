@@ -33,6 +33,8 @@ CHANNEL_COLORS = ['#3498DB', '#E74C3C', '#2ECC71']
 N_CH = len(CHANNEL_NAMES)
 Y_SCALES = [25, 50, 100, 200, 500]
 y_idx = 2  # default ±100
+FFT_SCALES = [500, 1000, 3000, 5000, 10000]
+fft_idx = 2  # default 3000
 
 # Frequency bands
 BANDS = {
@@ -58,7 +60,7 @@ if not streams:
     exit(1)
 inlet = StreamInlet(streams[0], max_chunklen=64)
 print(f'Connected: {inlet.info().channel_count()}ch @ {inlet.info().nominal_srate()}Hz')
-print('Controls: Up/Down arrow to zoom Y-axis\n')
+print('Controls: Up/Down = wave zoom, Left/Right = FFT zoom\n')
 
 # Ring buffer
 buf = np.zeros((N_CH, WINDOW_SAMPLES))
@@ -94,7 +96,7 @@ for i in range(N_CH):
     fft_lines.append(fft_line)
     ax_fft.set_ylabel('Power (µV²/Hz)')
     ax_fft.set_xlim(0, 50)
-    ax_fft.set_ylim(0, 50)
+    ax_fft.set_ylim(0, FFT_SCALES[fft_idx])
     ax_fft.grid(True, alpha=0.3)
 
     # Band highlights
@@ -113,22 +115,27 @@ for i in range(N_CH):
 all_axes[-1, 0].set_xlabel('Time (s)')
 all_axes[-1, 1].set_xlabel('Frequency (Hz)')
 
-scale_text = fig.text(0.02, 0.98, f'Scale: ±{Y_SCALES[y_idx]} µV',
+scale_text = fig.text(0.02, 0.98, f'Wave: ±{Y_SCALES[y_idx]} µV  |  FFT: {FFT_SCALES[fft_idx]} µV²/Hz',
                       va='top', fontsize=9, color='gray')
 plt.tight_layout(rect=[0, 0, 1, 0.96])
 
 
 def on_key(event):
-    global y_idx
+    global y_idx, fft_idx
     if event.key == 'up' and y_idx > 0:
         y_idx -= 1
     elif event.key == 'down' and y_idx < len(Y_SCALES) - 1:
         y_idx += 1
+    elif event.key == 'left' and fft_idx > 0:
+        fft_idx -= 1
+    elif event.key == 'right' and fft_idx < len(FFT_SCALES) - 1:
+        fft_idx += 1
     else:
         return
     for i in range(N_CH):
         all_axes[i, 0].set_ylim(-Y_SCALES[y_idx], Y_SCALES[y_idx])
-    scale_text.set_text(f'Scale: ±{Y_SCALES[y_idx]} µV')
+        all_axes[i, 1].set_ylim(0, FFT_SCALES[fft_idx])
+    scale_text.set_text(f'Wave: ±{Y_SCALES[y_idx]} µV  |  FFT: {FFT_SCALES[fft_idx]} µV²/Hz')
 
 fig.canvas.mpl_connect('key_press_event', on_key)
 
@@ -165,10 +172,6 @@ def update(frame):
         spectrum = spectrum / fft_n  # normalize
         fft_all.append(spectrum)
 
-    # Auto-scale FFT y-axis
-    fft_max = max(np.max(fft_all[i][freq_mask]) for i in range(N_CH))
-    fft_ylim = max(fft_max * 1.3, 1)
-
     for i in range(N_CH):
         # Waveform
         signal = filtered[i]
@@ -183,7 +186,6 @@ def update(frame):
 
         # FFT
         fft_lines[i].set_ydata(fft_all[i][freq_mask])
-        all_axes[i, 1].set_ylim(0, fft_ylim)
 
     return wave_lines + fft_lines
 
