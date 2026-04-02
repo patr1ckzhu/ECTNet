@@ -206,10 +206,25 @@ def set_train_mode(model, strategy):
     model.train()
 
 
-def build_optimizer(model, strategy, lr):
-    """Build optimizer. Uniform LR for all trainable parameters."""
-    params = filter(lambda p: p.requires_grad, model.parameters())
-    return torch.optim.Adam(params, lr=lr, betas=(0.5, 0.999))
+def build_optimizer(model, strategy, lr, diff_lr=False):
+    """Build optimizer. Supports differential LR for transfer learning."""
+    if diff_lr:
+        param_groups = [
+            {'params': model.cnn.parameters(), 'lr': lr * 0.1},
+            {'params': model.position.parameters(), 'lr': lr * 0.3},
+            {'params': model.trans.parameters(), 'lr': lr * 0.3},
+            {'params': model.classification.parameters(), 'lr': lr},
+        ]
+        # Filter out frozen params
+        param_groups = [
+            {**g, 'params': [p for p in g['params'] if p.requires_grad]}
+            for g in param_groups
+        ]
+        param_groups = [g for g in param_groups if g['params']]
+        return torch.optim.Adam(param_groups, betas=(0.5, 0.999))
+    else:
+        params = filter(lambda p: p.requires_grad, model.parameters())
+        return torch.optim.Adam(params, lr=lr, betas=(0.5, 0.999))
 
 
 # ─── Training Core ───────────────────────────────────────────────────────────
@@ -217,7 +232,8 @@ def build_optimizer(model, strategy, lr):
 def train_loop(model, train_data, train_labels, test_data, test_labels,
                epochs, lr, batch_size, val_ratio, number_aug, number_seg,
                save_path, freeze_strategy='none', l1_lambda=0,
-               pretrained_norm=None, ea_matrix=None):
+               pretrained_norm=None, ea_matrix=None,
+               label_smoothing=0.0, cosine_lr=False, diff_lr=False):
     """Unified training loop for pretrain, finetune, and baseline.
 
     Args:
@@ -226,6 +242,9 @@ def train_loop(model, train_data, train_labels, test_data, test_labels,
         test_data: (N_test, 3, 1000) or None
         test_labels: (N_test,) or None
         pretrained_norm: (mean, std) tuple to use pretrained normalization stats
+        label_smoothing: label smoothing factor (0.0 = off)
+        cosine_lr: use cosine annealing LR schedule
+        diff_lr: use differential learning rates (CNN < Transformer < Classifier)
 
     Returns:
         dict with accuracy, kappa, norm_mean, norm_std, best_epoch
@@ -276,9 +295,10 @@ def train_loop(model, train_data, train_labels, test_data, test_labels,
     # Apply freezing
     apply_freeze(model, freeze_strategy)
 
-    # Optimizer
-    optimizer = build_optimizer(model, freeze_strategy, lr)
-    criterion = nn.CrossEntropyLoss().cuda()
+    # Optimizer & scheduler
+    optimizer = build_optimizer(model, freeze_strategy, lr, diff_lr=diff_lr)
+    criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing).cuda()
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs) if cosine_lr else None
 
     # torch.compile on Linux
     if platform.system() != 'Windows':
@@ -316,6 +336,9 @@ def train_loop(model, train_data, train_labels, test_data, test_labels,
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
+
+        if scheduler is not None:
+            scheduler.step()
 
         # Validation
         if (e + 1) % val_interval == 0 or e == epochs - 1:
@@ -470,6 +493,8 @@ def finetune(args):
         val_ratio=args.val_ratio, number_aug=3, number_seg=8,
         save_path=save_path, freeze_strategy=args.freeze, l1_lambda=0,
         pretrained_norm=pretrained_norm, ea_matrix=ea_matrix,
+        label_smoothing=args.label_smoothing, cosine_lr=args.cosine_lr,
+        diff_lr=args.diff_lr,
     )
 
     # Re-save checkpoint with µV-domain norm stats for realtime_inference.py
@@ -643,11 +668,14 @@ def main():
     p_ft.add_argument('--use-pretrained-norm', action='store_true',
                        help='Use pretrained B normalization stats instead of recomputing from C data')
     p_ft.add_argument('--batch-size', type=int, default=72)
-    p_ft.add_argument('--val-ratio', type=float, default=0.3)
+    p_ft.add_argument('--val-ratio', type=float, default=0.15)
     p_ft.add_argument('--subject', type=int, default=1)
     p_ft.add_argument('--output-dir', default='transfer_C')
     p_ft.add_argument('--ea', action='store_true', help='Apply Euclidean Alignment')
     p_ft.add_argument('--ensemble', action='store_true', help='Save per-seed checkpoints for ensemble')
+    p_ft.add_argument('--label-smoothing', type=float, default=0.0, help='Label smoothing (e.g. 0.1)')
+    p_ft.add_argument('--cosine-lr', action='store_true', help='Cosine annealing LR schedule')
+    p_ft.add_argument('--diff-lr', action='store_true', help='Differential LR: CNN*0.1, Trans*0.3, Head*1.0')
 
     # Baseline
     p_bl = subparsers.add_parser('baseline', help='Train C from scratch (comparison)')
