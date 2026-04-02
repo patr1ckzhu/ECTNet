@@ -176,6 +176,40 @@ def interaug(data, labels, batch_size, number_aug=3, number_seg=8):
             torch.from_numpy(aug_label[shuffle] - 1).long().cuda())
 
 
+def online_augment(batch, noise_std=0.1, scale_range=(0.8, 1.2), shift_max=50):
+    """Apply random online augmentations to a batch of EEG data.
+
+    Args:
+        batch: Tensor (B, 1, C, T) on CUDA, already normalized
+        noise_std: Gaussian noise std relative to signal std
+        scale_range: (min, max) for random amplitude scaling
+        shift_max: max samples for random time shift
+
+    Returns:
+        augmented batch (same shape, same device)
+    """
+    B, _, C, T = batch.shape
+
+    # Gaussian noise (per-trial random std)
+    if noise_std > 0:
+        noise_level = torch.rand(B, 1, 1, 1, device=batch.device) * noise_std
+        batch = batch + torch.randn_like(batch) * noise_level
+
+    # Random amplitude scaling (per-trial)
+    lo, hi = scale_range
+    scale = lo + torch.rand(B, 1, 1, 1, device=batch.device) * (hi - lo)
+    batch = batch * scale
+
+    # Random time shift (circular, per-trial)
+    if shift_max > 0:
+        shifts = torch.randint(-shift_max, shift_max + 1, (B,))
+        for i in range(B):
+            if shifts[i] != 0:
+                batch[i] = torch.roll(batch[i], shifts[i].item(), dims=-1)
+
+    return batch
+
+
 # ─── Layer Freezing ──────────────────────────────────────────────────────────
 
 def apply_freeze(model, strategy):
@@ -233,7 +267,8 @@ def train_loop(model, train_data, train_labels, test_data, test_labels,
                epochs, lr, batch_size, val_ratio, number_aug, number_seg,
                save_path, freeze_strategy='none', l1_lambda=0,
                pretrained_norm=None, ea_matrix=None,
-               label_smoothing=0.0, cosine_lr=False, diff_lr=False):
+               label_smoothing=0.0, cosine_lr=False, diff_lr=False,
+               online_aug=False):
     """Unified training loop for pretrain, finetune, and baseline.
 
     Args:
@@ -245,6 +280,7 @@ def train_loop(model, train_data, train_labels, test_data, test_labels,
         label_smoothing: label smoothing factor (0.0 = off)
         cosine_lr: use cosine annealing LR schedule
         diff_lr: use differential learning rates (CNN < Transformer < Classifier)
+        online_aug: apply online augmentation (noise, scaling, time shift)
 
     Returns:
         dict with accuracy, kappa, norm_mean, norm_std, best_epoch
@@ -324,6 +360,10 @@ def train_loop(model, train_data, train_labels, test_data, test_labels,
                                            number_aug=number_aug, number_seg=number_seg)
             batch_img = torch.cat((batch_img, aug_data))
             batch_label = torch.cat((batch_label, aug_label))
+
+            # Online augmentation (noise, scaling, time shift)
+            if online_aug:
+                batch_img = online_augment(batch_img)
 
             _, outputs = compiled_model(batch_img)
             loss = criterion(outputs, batch_label)
@@ -494,7 +534,7 @@ def finetune(args):
         save_path=save_path, freeze_strategy=args.freeze, l1_lambda=0,
         pretrained_norm=pretrained_norm, ea_matrix=ea_matrix,
         label_smoothing=args.label_smoothing, cosine_lr=args.cosine_lr,
-        diff_lr=args.diff_lr,
+        diff_lr=args.diff_lr, online_aug=args.online_aug,
     )
 
     # Re-save checkpoint with µV-domain norm stats for realtime_inference.py
@@ -676,6 +716,7 @@ def main():
     p_ft.add_argument('--label-smoothing', type=float, default=0.0, help='Label smoothing (e.g. 0.1)')
     p_ft.add_argument('--cosine-lr', action='store_true', help='Cosine annealing LR schedule')
     p_ft.add_argument('--diff-lr', action='store_true', help='Differential LR: CNN*0.1, Trans*0.3, Head*1.0')
+    p_ft.add_argument('--online-aug', action='store_true', help='Online augmentation: noise + scaling + time shift')
 
     # Baseline
     p_bl = subparsers.add_parser('baseline', help='Train C from scratch (comparison)')
