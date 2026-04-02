@@ -42,6 +42,41 @@ MODEL_CONFIG = dict(
 )
 
 
+# ─── Euclidean Alignment ─────────────────────────────────────────────────────
+
+def compute_ea_matrix(X):
+    """Compute Euclidean Alignment whitening matrix R^(-1/2).
+
+    Args:
+        X: (n_trials, n_channels, n_timepoints)
+    Returns:
+        R_inv_sqrt: (n_channels, n_channels)
+    """
+    n_trials, n_ch, n_t = X.shape
+    R = np.zeros((n_ch, n_ch))
+    for i in range(n_trials):
+        R += X[i] @ X[i].T
+    R /= n_trials
+    R += 1e-8 * np.eye(n_ch)  # regularize
+
+    eigvals, eigvecs = np.linalg.eigh(R)
+    eigvals = np.maximum(eigvals, 1e-10)
+    R_inv_sqrt = eigvecs @ np.diag(1.0 / np.sqrt(eigvals)) @ eigvecs.T
+    return R_inv_sqrt.astype(np.float32)
+
+
+def apply_ea(X, R_inv_sqrt):
+    """Apply Euclidean Alignment: X_aligned = R^(-1/2) @ X.
+
+    Args:
+        X: (n_trials, n_channels, n_timepoints)
+        R_inv_sqrt: (n_channels, n_channels)
+    Returns:
+        X_aligned: same shape as X
+    """
+    return np.einsum('ij,njt->nit', R_inv_sqrt, X)
+
+
 # ─── Data Loading ────────────────────────────────────────────────────────────
 
 def load_all_B_data(data_dir='./mymat_raw/', apply_filter=False):
@@ -57,6 +92,27 @@ def load_all_B_data(data_dir='./mymat_raw/', apply_filter=False):
             data, label = load_data(data_dir, 'B', sub, mode=mode, apply_filter=apply_filter)
             all_data.append(data)
             all_labels.append(label.flatten())
+    return np.concatenate(all_data), np.concatenate(all_labels)
+
+
+def load_all_B_data_ea(data_dir='./mymat_raw/', apply_filter=False):
+    """Load all 9 B subjects with per-subject Euclidean Alignment."""
+    all_data, all_labels = [], []
+    for sub in range(1, 10):
+        sub_data, sub_labels = [], []
+        for mode in ['train', 'test']:
+            data, label = load_data(data_dir, 'B', sub, mode=mode, apply_filter=apply_filter)
+            sub_data.append(data)
+            sub_labels.append(label.flatten())
+        sub_data = np.concatenate(sub_data)
+        sub_labels = np.concatenate(sub_labels)
+
+        R_inv_sqrt = compute_ea_matrix(sub_data)
+        sub_data = apply_ea(sub_data, R_inv_sqrt)
+        print(f"  B-S{sub}: {sub_data.shape[0]} trials, EA applied")
+
+        all_data.append(sub_data)
+        all_labels.append(sub_labels)
     return np.concatenate(all_data), np.concatenate(all_labels)
 
 
@@ -161,7 +217,7 @@ def build_optimizer(model, strategy, lr):
 def train_loop(model, train_data, train_labels, test_data, test_labels,
                epochs, lr, batch_size, val_ratio, number_aug, number_seg,
                save_path, freeze_strategy='none', l1_lambda=0,
-               pretrained_norm=None):
+               pretrained_norm=None, ea_matrix=None):
     """Unified training loop for pretrain, finetune, and baseline.
 
     Args:
@@ -206,12 +262,13 @@ def train_loop(model, train_data, train_labels, test_data, test_labels,
     train_idx = split_perm[:n_train]
     val_idx = split_perm[n_train:]
 
-    all_data_np = train_data  # keep for interaug (uses 1-indexed labels)
-    all_labels_np = train_labels
-
     img = torch.from_numpy(train_data)
     label = torch.from_numpy(train_labels - 1)  # 0-indexed for CrossEntropyLoss
     dataset = torch.utils.data.TensorDataset(img[train_idx], label[train_idx])
+
+    # interaug should only sample from train split, not val
+    all_data_np = train_data[split_perm[:n_train].numpy()]
+    all_labels_np = train_labels[split_perm[:n_train].numpy()]
     val_img = img[val_idx].float().cuda()
     val_label = label[val_idx].long().cuda()
 
@@ -277,6 +334,7 @@ def train_loop(model, train_data, train_labels, test_data, test_labels,
                     'model_state_dict': model.state_dict(),
                     'norm_mean': norm_mean,
                     'norm_std': norm_std,
+                    'ea_matrix': ea_matrix,
                 }, save_path)
 
             if (e + 1) % 50 == 0 or e == epochs - 1:
@@ -335,9 +393,14 @@ def pretrain(args):
     print("=" * 60)
 
     os.makedirs(args.output_dir, exist_ok=True)
-    save_path = os.path.join(args.output_dir, 'model_pretrained.pth')
+    filename = 'model_pretrained_ea.pth' if args.ea else 'model_pretrained.pth'
+    save_path = os.path.join(args.output_dir, filename)
 
-    data, labels = load_all_B_data()
+    if args.ea:
+        print("  EA: per-subject Euclidean Alignment")
+        data, labels = load_all_B_data_ea()
+    else:
+        data, labels = load_all_B_data()
     print(f"Loaded B data: {data.shape}, labels: {np.unique(labels, return_counts=True)}")
 
     # Split off 10% as held-out test for sanity check
@@ -371,9 +434,11 @@ def finetune(args):
     print(f"  FINETUNE: Transfer learning (freeze={args.freeze})")
     print("=" * 60)
 
-    output_dir = f"{args.output_dir}_freeze_{args.freeze}"
+    ea_suffix = '_ea' if args.ea else ''
+    output_dir = f"{args.output_dir}_freeze_{args.freeze}{ea_suffix}"
     os.makedirs(output_dir, exist_ok=True)
-    save_path = os.path.join(output_dir, f'model_{args.subject}.pth')
+    seed_suffix = f'_seed{args._current_seed}' if hasattr(args, '_current_seed') and getattr(args, 'ensemble', False) else ''
+    save_path = os.path.join(output_dir, f'model_{args.subject}{seed_suffix}.pth')
 
     # Load pretrained model
     print(f"Loading pretrained: {args.pretrained}")
@@ -388,6 +453,15 @@ def finetune(args):
     train_data, train_labels, test_data, test_labels = load_C_data(subject=args.subject)
     print(f"C data (Volts): train={train_data.shape}, test={test_data.shape}")
 
+    # Euclidean Alignment on C data (train+test combined for stable covariance)
+    ea_matrix = None
+    if args.ea:
+        all_C = np.concatenate([train_data, test_data], axis=0)
+        ea_matrix = compute_ea_matrix(all_C)
+        train_data = apply_ea(train_data, ea_matrix)
+        test_data = apply_ea(test_data, ea_matrix)
+        print(f"  EA applied to C data ({all_C.shape[0]} trials)")
+
     # Use pretrained norm stats to align input distribution with pretrained model
     pretrained_norm = (pretrained_norm_mean, pretrained_norm_std) if args.use_pretrained_norm else None
 
@@ -396,7 +470,7 @@ def finetune(args):
         epochs=args.epochs, lr=args.lr, batch_size=args.batch_size,
         val_ratio=args.val_ratio, number_aug=3, number_seg=8,
         save_path=save_path, freeze_strategy=args.freeze, l1_lambda=0,
-        pretrained_norm=pretrained_norm,
+        pretrained_norm=pretrained_norm, ea_matrix=ea_matrix,
     )
 
     # Re-save checkpoint with µV-domain norm stats for realtime_inference.py
@@ -406,7 +480,9 @@ def finetune(args):
     final_ckpt['norm_mean'] = np.float64(norm_mean_V * 1e6)  # V → µV for inference
     final_ckpt['norm_std'] = np.float64(norm_std_V * 1e6)
     torch.save(final_ckpt, save_path)
-    print(f"Checkpoint saved with µV-domain norm stats: mean={norm_mean_V*1e6:.4f}, std={norm_std_V*1e6:.4f}")
+    print(f"Checkpoint saved: {save_path}")
+
+    result['save_path'] = save_path
 
     return result
 
@@ -419,12 +495,23 @@ def baseline(args):
     print("  BASELINE: Train from scratch on custom data")
     print("=" * 60)
 
-    os.makedirs(args.output_dir, exist_ok=True)
-    save_path = os.path.join(args.output_dir, f'model_{args.subject}.pth')
+    ea_suffix = '_ea' if args.ea else ''
+    output_dir = f"{args.output_dir}{ea_suffix}"
+    os.makedirs(output_dir, exist_ok=True)
+    save_path = os.path.join(output_dir, f'model_{args.subject}.pth')
 
     # Load C data (converted to Volts for consistency)
     train_data, train_labels, test_data, test_labels = load_C_data(subject=args.subject)
     print(f"C data (Volts): train={train_data.shape}, test={test_data.shape}")
+
+    # Euclidean Alignment
+    ea_matrix = None
+    if args.ea:
+        all_C = np.concatenate([train_data, test_data], axis=0)
+        ea_matrix = compute_ea_matrix(all_C)
+        train_data = apply_ea(train_data, ea_matrix)
+        test_data = apply_ea(test_data, ea_matrix)
+        print(f"  EA applied to C data ({all_C.shape[0]} trials)")
 
     model = EEGTransformer(**MODEL_CONFIG).cuda()
 
@@ -433,6 +520,7 @@ def baseline(args):
         epochs=args.epochs, lr=args.lr, batch_size=args.batch_size,
         val_ratio=args.val_ratio, number_aug=3, number_seg=8,
         save_path=save_path, freeze_strategy='none', l1_lambda=1e-4,
+        ea_matrix=ea_matrix,
     )
 
     # Re-save with µV-domain norm stats
@@ -455,6 +543,7 @@ def run_multi_seed(func, args, seeds):
         np.random.seed(seed)
         torch.manual_seed(seed)
         torch.cuda.manual_seed(seed)
+        args._current_seed = seed
         print(f"\n{'─'*40} Seed {seed} {'─'*40}")
         r = func(args)
         if 'accuracy' in r:
@@ -470,7 +559,63 @@ def run_multi_seed(func, args, seeds):
               f"(min={min(accs):.0f}%, max={max(accs):.0f}%)")
         print(f"  Kappa:    {np.mean(kappas):.2f}% ± {np.std(kappas):.2f}%")
         print(f"{'='*60}")
+
+    # Ensemble evaluation: load all seed checkpoints, average softmax on test set
+    if getattr(args, 'ensemble', False) and len(results) >= 2 and args.mode == 'finetune':
+        _evaluate_ensemble(args, seeds, results)
+
     return results
+
+
+def _evaluate_ensemble(args, seeds, results):
+    """Evaluate ensemble of multi-seed models on test set."""
+    import torch
+
+    # Load C test data
+    _, _, test_data, test_labels = load_C_data(subject=args.subject)
+    if args.ea:
+        train_data, _, _, _ = load_C_data(subject=args.subject)
+        all_C = np.concatenate([train_data, test_data], axis=0)
+        ea_matrix = compute_ea_matrix(all_C)
+        test_data = apply_ea(test_data, ea_matrix)
+
+    test_data = np.expand_dims(test_data, axis=1)  # (N, 1, 3, 1000)
+
+    ea_suffix = '_ea' if args.ea else ''
+    output_dir = f"{args.output_dir}_freeze_{args.freeze}{ea_suffix}"
+
+    # Collect softmax outputs from each model
+    all_probs = []
+    for seed in seeds:
+        ckpt_path = os.path.join(output_dir, f'model_{args.subject}_seed{seed}.pth')
+        if not os.path.exists(ckpt_path):
+            continue
+        ckpt = torch.load(ckpt_path, weights_only=False)
+        model = ckpt['model'].cuda()
+        model.eval()
+        norm_mean = ckpt['norm_mean'] * 1e-6  # µV back to V for test data
+        norm_std = ckpt['norm_std'] * 1e-6
+
+        test_norm = (test_data - norm_mean) / norm_std
+        test_t = torch.from_numpy(test_norm).float().cuda()
+
+        with torch.no_grad():
+            outputs_list = []
+            for i in range(0, len(test_t), 72):
+                _, out = model(test_t[i:i+72])
+                outputs_list.append(out.softmax(dim=1))
+            probs = torch.cat(outputs_list).cpu().numpy()
+        all_probs.append(probs)
+
+    if len(all_probs) >= 2:
+        avg_probs = np.mean(all_probs, axis=0)
+        y_pred = np.argmax(avg_probs, axis=1)
+        y_true = test_labels - 1
+        acc, prec, rec, f1, kappa = calMetrics(y_true, y_pred)
+        print(f"\n{'='*60}")
+        print(f"  ENSEMBLE ({len(all_probs)} models)")
+        print(f"  Accuracy: {acc*100:.2f}%  Kappa: {kappa*100:.2f}%")
+        print(f"{'='*60}")
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────
@@ -488,6 +633,7 @@ def main():
     p_pre.add_argument('--batch-size', type=int, default=72)
     p_pre.add_argument('--val-ratio', type=float, default=0.1)
     p_pre.add_argument('--output-dir', default='pretrained_B')
+    p_pre.add_argument('--ea', action='store_true', help='Apply Euclidean Alignment per subject')
 
     # Finetune
     p_ft = subparsers.add_parser('finetune', help='Fine-tune pretrained model on C data')
@@ -501,6 +647,8 @@ def main():
     p_ft.add_argument('--val-ratio', type=float, default=0.3)
     p_ft.add_argument('--subject', type=int, default=1)
     p_ft.add_argument('--output-dir', default='transfer_C')
+    p_ft.add_argument('--ea', action='store_true', help='Apply Euclidean Alignment')
+    p_ft.add_argument('--ensemble', action='store_true', help='Save per-seed checkpoints for ensemble')
 
     # Baseline
     p_bl = subparsers.add_parser('baseline', help='Train C from scratch (comparison)')
@@ -510,6 +658,7 @@ def main():
     p_bl.add_argument('--val-ratio', type=float, default=0.3)
     p_bl.add_argument('--subject', type=int, default=1)
     p_bl.add_argument('--output-dir', default='baseline_C')
+    p_bl.add_argument('--ea', action='store_true', help='Apply Euclidean Alignment')
 
     args = parser.parse_args()
     torch.backends.cudnn.deterministic = True
