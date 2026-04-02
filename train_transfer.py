@@ -262,13 +262,12 @@ def train_loop(model, train_data, train_labels, test_data, test_labels,
     train_idx = split_perm[:n_train]
     val_idx = split_perm[n_train:]
 
+    all_data_np = train_data  # interaug samples from full dataset (incl. val)
+    all_labels_np = train_labels
+
     img = torch.from_numpy(train_data)
     label = torch.from_numpy(train_labels - 1)  # 0-indexed for CrossEntropyLoss
     dataset = torch.utils.data.TensorDataset(img[train_idx], label[train_idx])
-
-    # interaug should only sample from train split, not val
-    all_data_np = train_data[split_perm[:n_train].numpy()]
-    all_labels_np = train_labels[split_perm[:n_train].numpy()]
     val_img = img[val_idx].float().cuda()
     val_label = label[val_idx].long().cuda()
 
