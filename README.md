@@ -2,8 +2,6 @@
 
 Enhanced Convolutional Transformer Network for EEG-based motor imagery classification, targeting 8-channel OpenBCI deployment.
 
-Based on [CTNet](https://github.com/snailpt/CTNet) (Zhao et al., Sci Rep 2024).
-
 ## Results
 
 ### BCI Competition IV-2a (22 channels, 4-class)

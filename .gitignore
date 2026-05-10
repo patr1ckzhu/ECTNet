@@ -21,7 +21,11 @@ __pycache__/
 *.swp
 
 # Private docs
-docs/research_directions.md
+docs/
+
+# Recordings & datasheets
+*.npz
+*.pdf
 
 # Claude Code
 .claude/

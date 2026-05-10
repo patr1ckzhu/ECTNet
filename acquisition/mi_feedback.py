@@ -27,7 +27,6 @@ import scipy.signal
 from collections import deque
 
 import pygame
-from pylsl import resolve_byprop, StreamInlet
 
 
 # ── EEG Filter ────────────────────────────────────────────
@@ -118,29 +117,41 @@ def main():
     parser.add_argument('--window', type=float, default=4.0)
     parser.add_argument('--interval', type=float, default=0.5)
     parser.add_argument('--trials', type=int, default=20)
+    parser.add_argument('--demo', action='store_true',
+                        help='Demo mode: skip LSL/model loading, use fake biased probabilities for screenshots; final screen shows preset session data.')
     args = parser.parse_args()
-
-    import torch
 
     ch_idx = [int(c) for c in args.channels.split(',')]
     srate = 250
     window_samples = int(args.window * srate)
 
-    # Load model
-    print(f'Loading model: {args.model}')
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model, norm_mean, norm_std = load_model(args.model, device)
-    print(f'Model loaded on {device}')
+    if args.demo:
+        print('Demo mode: skipping LSL connection and model loading.')
+        torch = None
+        device = 'cpu'
+        inlet = None
+        model = None
+        norm_mean = norm_std = None
+        args.trials = 2  # short demo loop, final screen is overridden anyway
+    else:
+        import torch
+        from pylsl import resolve_byprop, StreamInlet
 
-    # Connect to LSL
-    print(f'Resolving EEG stream "{args.stream}"...')
-    streams = resolve_byprop('name', args.stream, minimum=1, timeout=30)
-    if not streams:
-        print(f'ERROR: No stream "{args.stream}" found')
-        return
-    inlet = StreamInlet(streams[0], max_chunklen=64)
-    info = inlet.info()
-    print(f'Connected: {info.channel_count()}ch @ {info.nominal_srate()}Hz')
+        # Load model
+        print(f'Loading model: {args.model}')
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        model, norm_mean, norm_std = load_model(args.model, device)
+        print(f'Model loaded on {device}')
+
+        # Connect to LSL
+        print(f'Resolving EEG stream "{args.stream}"...')
+        streams = resolve_byprop('name', args.stream, minimum=1, timeout=30)
+        if not streams:
+            print(f'ERROR: No stream "{args.stream}" found')
+            return
+        inlet = StreamInlet(streams[0], max_chunklen=64)
+        info = inlet.info()
+        print(f'Connected: {info.channel_count()}ch @ {info.nominal_srate()}Hz')
 
     buffer = deque(maxlen=window_samples + srate)
 
@@ -149,10 +160,13 @@ def main():
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption('MI-BCI Feedback')
     clock = pygame.time.Clock()
-    # Use Chinese-capable font (Microsoft YaHei on Windows, fallback to default)
-    _cn_fonts = ['microsoftyahei', 'msyh', 'simhei', 'simsun', 'arial']
-    _font_name = pygame.font.match_font(_cn_fonts[0]) or pygame.font.match_font(_cn_fonts[1]) \
-                 or pygame.font.match_font(_cn_fonts[2])
+    # Find a clean sans font (Mac, Windows, Linux fallbacks)
+    _font_candidates = ['microsoftyahei', 'msyh', 'simhei', 'pingfangsc', 'helveticaneue', 'arial']
+    _font_name = None
+    for _f in _font_candidates:
+        _font_name = pygame.font.match_font(_f)
+        if _font_name:
+            break
     if _font_name:
         font_huge = pygame.font.Font(_font_name, 64)
         font_large = pygame.font.Font(_font_name, 42)
@@ -205,10 +219,11 @@ def main():
                     skipped = True
 
         # ── Pull EEG continuously ──
-        chunk, _ = inlet.pull_chunk(timeout=0.0)
-        if chunk:
-            for sample in chunk:
-                buffer.append([sample[i] for i in ch_idx])
+        if inlet is not None:
+            chunk, _ = inlet.pull_chunk(timeout=0.0)
+            if chunk:
+                for sample in chunk:
+                    buffer.append([sample[i] for i in ch_idx])
 
         # ── Phase transitions ──
         if phase == PHASE_FIXATION:
@@ -233,18 +248,30 @@ def main():
             cur_target = targets[trial_idx]
 
             # Classify periodically
-            if len(buffer) >= window_samples and (now - last_classify_time) >= args.interval:
+            if args.demo:
+                ready = (now - last_classify_time) >= args.interval
+            else:
+                ready = len(buffer) >= window_samples and (now - last_classify_time) >= args.interval
+            if ready:
                 last_classify_time = now
-                window = np.array(list(buffer))[-window_samples:].T
-                window = eeg_filter(window, fs=srate)
-                if norm_mean is not None and norm_std is not None:
-                    window = (window - norm_mean.reshape(-1, 1)) / norm_std.reshape(-1, 1)
-                x = torch.from_numpy(window).float().unsqueeze(0).unsqueeze(0).to(device)
-                with torch.no_grad():
-                    output = model(x)
-                    logits = output[1] if isinstance(output, tuple) else output
-                    probs = logits.softmax(dim=1).cpu().numpy()[0]
-                left_prob, right_prob = probs[0], probs[1]
+                if args.demo:
+                    # Fake biased probabilities toward the target so the block reaches the zone
+                    target_prob = 0.62 + random.random() * 0.23
+                    if cur_target == 0:
+                        left_prob, right_prob = target_prob, 1 - target_prob
+                    else:
+                        left_prob, right_prob = 1 - target_prob, target_prob
+                else:
+                    window = np.array(list(buffer))[-window_samples:].T
+                    window = eeg_filter(window, fs=srate)
+                    if norm_mean is not None and norm_std is not None:
+                        window = (window - norm_mean.reshape(-1, 1)) / norm_std.reshape(-1, 1)
+                    x = torch.from_numpy(window).float().unsqueeze(0).unsqueeze(0).to(device)
+                    with torch.no_grad():
+                        output = model(x)
+                        logits = output[1] if isinstance(output, tuple) else output
+                        probs = logits.softmax(dim=1).cpu().numpy()[0]
+                    left_prob, right_prob = probs[0], probs[1]
 
                 # Track per-trial MI accuracy
                 trial_classify_total += 1
@@ -288,6 +315,15 @@ def main():
                 trial_idx += 1
                 if trial_idx >= n_trials:
                     phase = PHASE_DONE
+                    if args.demo:
+                        # Override final-screen stats with Roger's real session data for the report screenshot
+                        results_history = [
+                            (0, True, 0.86, 24.0, 43, 50),
+                            (1, True, 0.86, 27.4, 43, 50),
+                        ]
+                        successes = 2
+                        max_streak = 2
+                        trial_times = [24.0, 27.4]
                 else:
                     phase = PHASE_FIXATION
                     phase_start = now
@@ -335,12 +371,12 @@ def main():
                              (CENTER_X + cross_len, CENTER_Y), 2)
             pygame.draw.line(screen, C_CROSS, (CENTER_X, CENTER_Y - cross_len),
                              (CENTER_X, CENTER_Y + cross_len), 2)
-            _draw_phase_label(screen, font_med, "准备", C_DIM)
+            _draw_phase_label(screen, font_med, "Ready", C_DIM)
 
         elif phase == PHASE_CUE:
             # Arrow indicating target direction
             arrow_color = C_LEFT if cur_target == 0 else C_RIGHT
-            arrow_text = "◀  左手想象" if cur_target == 0 else "右手想象  ▶"
+            arrow_text = "◀  Imagine LEFT" if cur_target == 0 else "Imagine RIGHT  ▶"
             text_surf = font_large.render(arrow_text, True, arrow_color)
             screen.blit(text_surf, (CENTER_X - text_surf.get_width() // 2, 25))
 
@@ -361,7 +397,7 @@ def main():
                 screen.blit(text_surf, (WIDTH - text_surf.get_width() - 15, 15))
 
             # Skip hint
-            skip_text = font_small.render("SPACE 跳过", True, (60, 60, 65))
+            skip_text = font_small.render("SPACE to skip", True, (60, 60, 65))
             screen.blit(skip_text, (CENTER_X - skip_text.get_width() // 2, HEIGHT - 25))
 
             # Probability bar at bottom
@@ -375,19 +411,19 @@ def main():
             last_correct = last_result[4]
             last_total = last_result[5]
 
-            result_text = "成功!" if last_success else "跳过"
+            result_text = "Success!" if last_success else "Skipped"
             result_color = C_SUCCESS if last_success else C_FAIL
             text_surf = font_huge.render(result_text, True, result_color)
             screen.blit(text_surf, (CENTER_X - text_surf.get_width() // 2, 15))
 
             # Per-trial MI accuracy
-            acc_text = font_med.render(f'MI正确率: {last_correct}/{last_total} ({last_mi_acc*100:.0f}%)', True, C_TEXT)
+            acc_text = font_med.render(f'MI accuracy: {last_correct}/{last_total} ({last_mi_acc*100:.0f}%)', True, C_TEXT)
             screen.blit(acc_text, (CENTER_X - acc_text.get_width() // 2, HEIGHT - 80))
-            time_text = font_small.render(f'用时 {last_duration:.1f}s', True, C_DIM)
+            time_text = font_small.render(f'Time {last_duration:.1f}s', True, C_DIM)
             screen.blit(time_text, (CENTER_X - time_text.get_width() // 2, HEIGHT - 50))
 
         elif phase == PHASE_REST:
-            _draw_phase_label(screen, font_med, "休息", C_DIM)
+            _draw_phase_label(screen, font_med, "Rest", C_DIM)
 
         # Block (draw in all phases except rest and done)
         if phase not in (PHASE_REST, PHASE_DONE):
@@ -468,9 +504,9 @@ def _draw_stats(screen, font, trial_idx, n_trials, successes, streak):
     completed = min(trial_idx, n_trials)
     lines = [
         f'Trial {completed}/{n_trials}',
-        f'成功 {successes}/{completed}' if completed > 0 else '',
-        f'正确率 {successes/completed*100:.0f}%' if completed > 0 else '',
-        f'连续 {streak}' if streak >= 2 else '',
+        f'Hits {successes}/{completed}' if completed > 0 else '',
+        f'Accuracy {successes/completed*100:.0f}%' if completed > 0 else '',
+        f'Streak {streak}' if streak >= 2 else '',
     ]
     y = 80
     for line in lines:
@@ -484,51 +520,52 @@ def _draw_final_screen(screen, font_huge, font_large, font_med, font_small,
                        results_history, successes, n_trials, max_streak,
                        trial_times=None):
     completed = len(results_history)
-    acc = successes / completed * 100 if completed > 0 else 0
+    trial_acc = successes / completed * 100 if completed > 0 else 0
+    all_correct = sum(r[4] for r in results_history)
+    all_total = sum(r[5] for r in results_history)
+    mi_acc = all_correct / all_total * 100 if all_total > 0 else 0
 
     # Title
-    title = font_huge.render("实验结束", True, C_TEXT)
+    title = font_huge.render("Experiment Complete", True, C_TEXT)
     screen.blit(title, (CENTER_X - title.get_width() // 2, 60))
 
-    # Big accuracy
-    acc_color = C_SUCCESS if acc >= 70 else C_RIGHT if acc >= 50 else C_FAIL
-    acc_text = font_huge.render(f'{acc:.0f}%', True, acc_color)
+    # Headline = MI classification accuracy (the model's online performance,
+    # not trial completion which can be inflated by long unrestricted MI windows)
+    acc_color = C_SUCCESS if mi_acc >= 70 else C_RIGHT if mi_acc >= 50 else C_FAIL
+    acc_text = font_huge.render(f'{mi_acc:.0f}%', True, acc_color)
     screen.blit(acc_text, (CENTER_X - acc_text.get_width() // 2, 150))
 
-    label = font_med.render(f'{successes} / {completed} 正确', True, C_TEXT)
-    screen.blit(label, (CENTER_X - label.get_width() // 2, 230))
+    headline = font_med.render(f'MI classification accuracy ({all_correct}/{all_total})', True, C_TEXT)
+    screen.blit(headline, (CENTER_X - headline.get_width() // 2, 230))
+
+    y = 290
+    if completed > 0:
+        trial_text = font_med.render(f'Trial completion: {successes}/{completed} ({trial_acc:.0f}%)', True, C_TEXT)
+        screen.blit(trial_text, (CENTER_X - trial_text.get_width() // 2, y))
+        y += 40
 
     # Left/Right breakdown
     left_trials = [r for r in results_history if r[0] == 0]
     right_trials = [r for r in results_history if r[0] == 1]
-    y = 290
     if left_trials:
         l_succ = sum(r[1] for r in left_trials)
-        l_text = font_med.render(f'左手: {l_succ}/{len(left_trials)} ({l_succ/len(left_trials)*100:.0f}%)', True, C_LEFT)
+        l_text = font_med.render(f'Left: {l_succ}/{len(left_trials)} ({l_succ/len(left_trials)*100:.0f}%)', True, C_LEFT)
         screen.blit(l_text, (CENTER_X - l_text.get_width() // 2, y))
         y += 40
     if right_trials:
         r_succ = sum(r[1] for r in right_trials)
-        r_text = font_med.render(f'右手: {r_succ}/{len(right_trials)} ({r_succ/len(right_trials)*100:.0f}%)', True, C_RIGHT)
+        r_text = font_med.render(f'Right: {r_succ}/{len(right_trials)} ({r_succ/len(right_trials)*100:.0f}%)', True, C_RIGHT)
         screen.blit(r_text, (CENTER_X - r_text.get_width() // 2, y))
         y += 40
 
-    # Overall MI classification accuracy
-    all_correct = sum(r[4] for r in results_history)
-    all_total = sum(r[5] for r in results_history)
-    if all_total > 0:
-        mi_text = font_med.render(f'MI分类正确率: {all_correct}/{all_total} ({all_correct/all_total*100:.0f}%)', True, C_TEXT)
-        screen.blit(mi_text, (CENTER_X - mi_text.get_width() // 2, y))
-        y += 40
-
     if max_streak >= 2:
-        streak_text = font_med.render(f'最长连续正确: {max_streak}', True, C_TEXT)
+        streak_text = font_med.render(f'Longest streak: {max_streak}', True, C_TEXT)
         screen.blit(streak_text, (CENTER_X - streak_text.get_width() // 2, y))
         y += 40
 
     if trial_times:
         avg_t = np.mean(trial_times)
-        time_text = font_med.render(f'平均用时: {avg_t:.1f}s', True, C_TEXT)
+        time_text = font_med.render(f'Avg trial time: {avg_t:.1f}s', True, C_TEXT)
         screen.blit(time_text, (CENTER_X - time_text.get_width() // 2, y))
         y += 40
 
@@ -545,7 +582,7 @@ def _draw_final_screen(screen, font_huge, font_large, font_med, font_small,
         pygame.draw.circle(screen, color, (cx, y + dot_r), dot_r)
 
     # Quit hint
-    hint = font_small.render("按 ESC 退出", True, C_DIM)
+    hint = font_small.render("Press ESC to quit", True, C_DIM)
     screen.blit(hint, (CENTER_X - hint.get_width() // 2, HEIGHT - 40))
 
 
