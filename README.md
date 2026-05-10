@@ -34,6 +34,18 @@ Enhanced Convolutional Transformer Network for EEG-based motor imagery classific
 - CA-learned 8ch selection: 73.50%
 - Hardware deployment recommendation: manual 8ch
 
+### Custom Hardware (ADS1299 + STM32, 3-channel) — Transfer Learning
+
+End-to-end pipeline on a custom ADS1299 + STM32 + Bluetooth acquisition board. Single-subject fine-tuning on 250 dry-electrode trials (C3, C4, Cz), 10-seed averaged.
+
+| Method | Mean Accuracy | Std |
+|---|---|---|
+| From scratch (baseline) | 76.80% | 5.23% |
+| Transfer from IV-2b (full fine-tune) | 82.00% | 1.79% |
+| Transfer + online augmentation | **85.40%** | **1.28%** |
+
+Pretrained on pooled BCI IV-2b (9 subjects, 6520 trials → 82.52% held-out). Online augmentation = Gaussian noise + amplitude scaling + time shift. Best seed reaches 88%.
+
 ## Architecture
 
 ECTNet = PatchEmbeddingCNN (temporal conv + channel attention + spatial conv) + Transformer encoder
@@ -51,6 +63,7 @@ ECTNet = PatchEmbeddingCNN (temporal conv + channel attention + spatial conv) + 
 ECTNet/
 ├── model.py                 # Model architecture (ChannelAttention, PatchEmbeddingCNN, Transformer)
 ├── train.py                 # Training script with parallel subject training (mp.Pool)
+├── train_transfer.py        # Transfer learning (pretrain / finetune / baseline)
 ├── utils.py                 # Data loading, metrics, filtering, GradCAM
 ├── preprocessing/
 │   ├── preprocessing_for_2a.py   # BCI IV-2a: GDF → MAT
@@ -59,16 +72,20 @@ ECTNet/
 │   ├── paradigm.py               # PsychoPy MI experiment (LSL markers)
 │   ├── recorder.py               # LSL multi-stream recorder (EEG + markers → .npz)
 │   ├── make_dataset.py           # Recording → .mat converter (filter, epoch, split)
-│   └── recordings/               # Recorded .npz files
+│   ├── serial_lsl_bridge.py      # Serial → LSL bridge for custom ADS1299 board
+│   ├── check_signal.py           # Real-time EEG viewer (bandpass + RMS quality)
+│   ├── realtime_inference.py     # Real-time MI classifier (LSL → model → LEFT/RIGHT)
+│   └── mi_feedback.py            # Trial-based feedback demo (pygame)
+├── firmware/
+│   ├── ads1299.c / .h            # ADS1299 SPI driver (STM32)
+│   └── main_user_code.c          # STM32 CubeMX user-code blocks
 ├── experiments/
 │   ├── train_8ch.py              # 8-channel experiment
 │   ├── train_2class.py           # 2-class (left/right)
 │   ├── train_2class_8ch.py       # 2-class on 8 channels
 │   └── train_3class.py           # 3-class (left/right/feet)
-├── tools/
-│   └── channel_selector.py       # Channel selection utility
-└── docs/
-    └── openbci_setup_guide.md    # OpenBCI Cyton acquisition guide
+└── tools/
+    └── channel_selector.py       # Channel selection utility
 ```
 
 ## Quick Start
@@ -109,28 +126,30 @@ python train.py C
 
 Training uses `torch.compile(mode='reduce-overhead')` (CUDA graphs, Linux) + parallel subject processing (N_WORKERS=3). On RTX 5080: A2(8ch) ~3min, A(22ch) ~10min, B(3ch) ~7min for all 9 subjects.
 
-### Custom Data Acquisition (OpenBCI Cyton)
+### Custom Data Acquisition
 
-Collect your own MI-EEG data with an 8-channel OpenBCI Cyton board. See [`docs/openbci_setup_guide.md`](docs/openbci_setup_guide.md) for full instructions.
+Two acquisition paths are supported:
+
+**OpenBCI Cyton (8 ch)** — uses the OpenBCI GUI's LSL output (stream `obci_eeg1`).
+
+**Custom ADS1299 + STM32 + HC-05 board (3 ch)** — uses `serial_lsl_bridge.py` to bridge the serial stream to LSL, replacing the OpenBCI GUI.
 
 ```bash
-# Terminal 1: record EEG + markers
-python acquisition/recorder.py
+# Custom board only — bridge serial → LSL first
+python acquisition/serial_lsl_bridge.py --port COM4 --scale
 
-# Terminal 2: run experiment paradigm (30 trials default, configurable)
-python acquisition/paradigm.py
-python acquisition/paradigm.py -n 25    # 50 trials
+# Common to both — record + paradigm
+python acquisition/recorder.py
+python acquisition/paradigm.py            # 30 trials default
+python acquisition/paradigm.py -n 25      # 50 trials
 
 # Convert recording to training format (supports merging multiple files)
 python acquisition/make_dataset.py --input acquisition/recordings/rec1.npz rec2.npz
 
-# Train on custom data
+# Train on custom data (from scratch)
 python train.py C
-```
 
-## Reference
-
-```
-Zhao, W., Jiang, X., Zhang, B. et al. CTNet: a convolutional transformer network for
-EEG-based motor imagery classification. Sci Rep 14, 20237 (2024).
+# Or with transfer learning from BCI IV-2b
+python train_transfer.py finetune --pretrained pretrained_B/model_pretrained.pth \
+    --freeze none --epochs 1000 --lr 0.001 --online-aug
 ```
