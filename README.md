@@ -93,7 +93,8 @@ ECTNet/
 ### Environment
 
 ```bash
-conda activate eeg-moabb
+conda create -n ectnet python=3.10 -y
+conda activate ectnet
 pip install torch mne einops torchsummary scikit-learn pandas scipy opencv-python-headless
 ```
 
