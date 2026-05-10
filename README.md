@@ -88,11 +88,6 @@ ECTNet/
 ├── firmware/
 │   ├── ads1299.c / .h            # ADS1299 SPI driver (STM32)
 │   └── main_user_code.c          # STM32 CubeMX user-code blocks
-├── experiments/
-│   ├── train_8ch.py              # 8-channel experiment
-│   ├── train_2class.py           # 2-class (left/right)
-│   ├── train_2class_8ch.py       # 2-class on 8 channels
-│   └── train_3class.py           # 3-class (left/right/feet)
 └── tools/
     └── channel_selector.py       # Channel selection utility
 ```
