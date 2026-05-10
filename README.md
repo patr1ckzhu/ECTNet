@@ -1,6 +1,12 @@
 # ECTNet
 
-Enhanced Convolutional Transformer Network for EEG-based motor imagery classification, targeting 8-channel OpenBCI deployment.
+Enhanced Convolutional Transformer Network for EEG-based motor imagery classification. End-to-end pipeline from a custom ADS1299 + STM32 acquisition board through real-time CPU inference (~40 ms latency).
+
+## System Overview
+
+![System block diagram](assets/system_block_diagram.png)
+
+8 dry electrodes → on-board analog frontend (ESD + RC filter) → ADS1299 24-bit ΔΣ ADC → STM32F103 over SPI → HC-05 Bluetooth → CH340 USB bridge → PC. The PC-side `serial_lsl_bridge.py` republishes the stream over LSL so it plugs into the same recording / inference path used for OpenBCI hardware.
 
 ## Results
 
@@ -48,14 +54,17 @@ Pretrained on pooled BCI IV-2b (9 subjects, 6520 trials → 82.52% held-out). On
 
 ## Architecture
 
+![ECTNet framework](assets/ectnet_framework.jpg)
+
 ECTNet = PatchEmbeddingCNN (temporal conv + channel attention + spatial conv) + Transformer encoder
 
-- **Channel Attention**: SE-Net style, learns per-electrode importance weights
+- **Channel Attention**: SE-Net style, learns per-electrode importance weights (e.g. C3=0.68, C4=0.39, Cz=0.30 on the 3-ch deployment — consistent with sensorimotor lateralisation)
 - **Temporal Conv**: EEGNet-inspired, extracts frequency features per channel
 - **Spatial Conv**: Depth-wise, fuses across EEG electrodes
 - **Transformer**: Multi-head self-attention on temporal patches
 - **Preprocessing**: Optional bandpass (4-40Hz) + notch (50Hz) filtering via `eeg_filter()`, shared between training and inference
 - **Checkpoint**: Saves model + normalization params (mean/std) for deployment
+- **Transfer learning recipe** (bottom of the diagram): random-init 76.8% → IV-2b pretrain + full fine-tune 82.0% → + online augmentation **85.4%**
 
 ## Project Structure
 
