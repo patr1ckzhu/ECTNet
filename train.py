@@ -1,5 +1,5 @@
 """
-CTNet Training Script
+ECTNet Training Script
 
 Subject-specific and cross-subject (LOSO) training for EEG motor imagery classification.
 """
