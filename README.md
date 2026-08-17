@@ -1,6 +1,13 @@
 # ECTNet
 
+[![IEEE BioCAS 2026](https://img.shields.io/badge/IEEE%20BioCAS%202026-Accepted-success)](https://2026.ieee-biocas.org/)
+
 Enhanced Convolutional Transformer Network for EEG-based motor imagery classification. End-to-end pipeline from a custom ADS1299 + STM32 acquisition board through real-time CPU inference (~40 ms latency).
+
+> **Accepted at IEEE BioCAS 2026** — *"Real-Time Motor-Imagery Decoding on a Self-Built Three-Channel Dry-Electrode BCI via Cross-Dataset Transfer Learning"*
+> Bowen Zhang<sup>†</sup>, Pinxi Zhu<sup>†</sup>, Zihan Ding, Yuang Chen, Rishan Patel, Dai Jiang — Department of Electronic and Electrical Engineering, University College London (UCL)
+> <sup>†</sup>Equal contribution
+> 2026 IEEE Biomedical Circuits and Systems Conference, Incheon, Korea, October 8–10 2026 (poster presentation).
 
 ## System Overview
 
@@ -158,3 +165,24 @@ python train.py C
 python train_transfer.py finetune --pretrained pretrained_B/model_pretrained.pth \
     --freeze none --epochs 1000 --lr 0.001 --online-aug
 ```
+
+## Citation
+
+If you use this work, please cite:
+
+```bibtex
+@inproceedings{zhang2026realtime,
+  title     = {Real-Time Motor-Imagery Decoding on a Self-Built Three-Channel
+               Dry-Electrode {BCI} via Cross-Dataset Transfer Learning},
+  author    = {Zhang, Bowen and Zhu, Pinxi and Ding, Zihan and Chen, Yuang
+               and Patel, Rishan and Jiang, Dai},
+  booktitle = {2026 IEEE Biomedical Circuits and Systems Conference (BioCAS)},
+  address   = {Incheon, Korea},
+  year      = {2026},
+  note      = {Bowen Zhang and Pinxi Zhu contributed equally}
+}
+```
+
+<!-- DOI / pages to be added once the paper appears on IEEE Xplore. -->
+
+ECTNet is adapted from [CTNet](https://doi.org/10.1038/s41598-024-71118-7) (Zhao et al., *Sci Rep* 14, 20237, 2024).
